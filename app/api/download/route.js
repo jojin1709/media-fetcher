@@ -1,13 +1,8 @@
-import path from "path";
 import { spawn } from "child_process";
+import { getYtDlpPath } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-function resolveBinary() {
-  const bin = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
-  return path.join(process.cwd(), "node_modules", "youtube-dl-exec", "bin", bin);
-}
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -21,6 +16,8 @@ export async function GET(req) {
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  const binPath = await getYtDlpPath();
 
   // Safe filename sanitization
   const safeFilename = rawFilename
@@ -45,13 +42,16 @@ export async function GET(req) {
     "--no-check-certificates",
     "--no-part",
     "--no-playlist",
+    "--extractor-args",
+    "youtube:player_client=android,mweb,web",
     "--add-header",
-    "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "user-agent:Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
     "--add-header",
     "referer:https://www.google.com/",
   ];
 
-  const child = spawn(resolveBinary(), args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+
 
   let stderrTail = "";
   child.stderr.on("data", (chunk) => {

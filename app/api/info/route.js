@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import youtubedl from "youtube-dl-exec";
+import { runYtDlp } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -72,16 +72,8 @@ export async function POST(req) {
   const cleanUrl = url.trim();
 
   try {
-    const info = await youtubedl(cleanUrl, {
-      dumpSingleJson: true,
-      noWarnings: true,
-      noCheckCertificates: true,
-      preferFreeFormats: true,
-      addHeader: [
-        "referer:https://www.google.com/",
-        "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      ],
-    });
+    const info = await runYtDlp(cleanUrl);
+
 
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
     
