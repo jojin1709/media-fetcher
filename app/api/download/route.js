@@ -8,7 +8,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const url = searchParams.get("url");
   const rawFormat = searchParams.get("format") || "best";
-  const rawFilename = searchParams.get("filename") || "download";
+  const rawFilename = searchParams.get("filename") || "download.mp4";
 
   if (!url) {
     return new Response(JSON.stringify({ error: "Missing url parameter" }), {
@@ -17,24 +17,55 @@ export async function GET(req) {
     });
   }
 
-  const binPath = await getYtDlpPath();
-  const cookiesPath = getCookiesFile();
-  const proxyUrl = getProxyUrl();
-
-  // Safe filename sanitization
+  // Safe filename sanitization: asciiFilename for filename="..." header, encodedFilename for filename*=UTF-8''...
   const safeFilename = rawFilename
     .replace(/[/\\?%*:|"<>]/g, "_")
     .replace(/\s+/g, " ")
     .trim();
 
+  const asciiFilename = safeFilename.replace(/[^\x20-\x7E]/g, "_") || "download.mp4";
+  const encodedFilename = encodeURIComponent(safeFilename).replace(/['()]/g, escape).replace(/\*/g, '%2A');
+
+  // If URL is already a direct media stream URL from CDN, proxy fetch directly
+  if (
+    url.includes(".googlevideo.com") ||
+    url.includes(".cdninstagram.com") ||
+    url.includes(".fbcdn.net") ||
+    url.match(/\.(mp4|mp3|m4a|webm|mov|avi)(\?|$)/i)
+  ) {
+    try {
+      const cdnRes = await fetch(url, {
+        headers: {
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "referer": "https://www.google.com/",
+        },
+      });
+
+      if (cdnRes.ok && cdnRes.body) {
+        return new Response(cdnRes.body, {
+          headers: {
+            "Content-Type": cdnRes.headers.get("content-type") || "application/octet-stream",
+            "Content-Disposition": `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
+            "Cache-Control": "no-store",
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("[download] Direct CDN fetch failed, falling back to yt-dlp...", e.message);
+    }
+  }
+
+  const binPath = await getYtDlpPath();
+  const cookiesPath = getCookiesFile();
+  const proxyUrl = getProxyUrl();
+
   let formatArg = rawFormat;
   if (rawFormat === "best") {
-    formatArg = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best";
+    formatArg = "best[ext=mp4]/bestvideo+bestaudio/best";
   } else if (rawFormat === "bestaudio") {
     formatArg = "bestaudio/best";
   } else if (/^\d+$/.test(rawFormat.trim())) {
-    // If user selected a specific numeric video format ID, merge with best audio stream on demand
-    formatArg = `${rawFormat.trim()}+bestaudio/best`;
+    formatArg = `${rawFormat.trim()}/best`;
   }
 
   const args = [
@@ -97,12 +128,10 @@ export async function GET(req) {
     },
   });
 
-  const encodedFilename = encodeURIComponent(safeFilename).replace(/['()]/g, escape).replace(/\*/g, '%2A');
-
   return new Response(stream, {
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`,
+      "Content-Disposition": `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
       "Cache-Control": "no-store",
     },
   });
