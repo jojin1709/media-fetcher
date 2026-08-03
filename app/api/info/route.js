@@ -142,7 +142,7 @@ export async function POST(req) {
       formats: processedFormats,
     });
   } catch (err) {
-    const rawError = err?.stderr?.toString?.() || err?.message || "";
+    const rawError = err?.stderr?.toString?.() || err?.message || String(err);
     let message = "Could not extract media from that URL. Please verify the link and try again.";
     
     if (rawError.includes("Private video") || rawError.includes("login")) {
@@ -154,9 +154,10 @@ export async function POST(req) {
     } else {
       const line = rawError.split("\n").filter((l) => l.startsWith("ERROR:")).pop();
       if (line) message = line.replace(/^ERROR:\s*/, "");
+      else if (rawError) message = rawError.slice(0, 300);
     }
 
-    return NextResponse.json({ error: message }, { status: 422 });
+    return NextResponse.json({ error: message, debugError: rawError }, { status: 422 });
   }
 }
 

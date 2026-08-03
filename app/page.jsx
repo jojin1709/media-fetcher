@@ -8,8 +8,7 @@ const PLATFORMS = [
     name: "All-in-One",
     icon: "🌐",
     placeholder: "Paste any link (YouTube, Instagram, TikTok, X, SoundCloud...)",
-    hint: "Supports 1000+ platforms with auto-detection",
-    sample: "https://www.youtube.com/watch?v=ycKVUHSYpys",
+    hint: "Auto-detects and extracts from 1000+ video & audio platforms",
   },
   {
     id: "youtube",
@@ -17,7 +16,6 @@ const PLATFORMS = [
     icon: "🔴",
     placeholder: "https://www.youtube.com/watch?v=... or https://youtu.be/...",
     hint: "Download 4K, 1080p HD Videos, Shorts & MP3 Audio tracks",
-    sample: "https://www.youtube.com/watch?v=ycKVUHSYpys",
     match: (url) => url.includes("youtube.com") || url.includes("youtu.be"),
   },
   {
@@ -25,8 +23,7 @@ const PLATFORMS = [
     name: "Instagram",
     icon: "📸",
     placeholder: "https://www.instagram.com/reel/... or /p/...",
-    hint: "Extract Instagram Reels, Video posts & IGTV content",
-    sample: "https://www.instagram.com/reel/C3_sample/",
+    hint: "Extract Instagram Reels, Video posts & Carousel media",
     match: (url) => url.includes("instagram.com"),
   },
   {
@@ -34,8 +31,7 @@ const PLATFORMS = [
     name: "TikTok",
     icon: "🎵",
     placeholder: "https://www.tiktok.com/@user/video/... or vt.tiktok.com/...",
-    hint: "Save TikTok HD videos & extract background audio",
-    sample: "https://www.tiktok.com/@user/video/1234567890",
+    hint: "Save TikTok HD videos without watermark & extract audio",
     match: (url) => url.includes("tiktok.com"),
   },
   {
@@ -43,8 +39,7 @@ const PLATFORMS = [
     name: "Twitter / X",
     icon: "🐦",
     placeholder: "https://x.com/username/status/...",
-    hint: "Download X/Twitter videos, clips, and GIFs",
-    sample: "https://x.com/user/status/1234567890",
+    hint: "Download X/Twitter media clips, videos, and GIFs",
     match: (url) => url.includes("twitter.com") || url.includes("x.com"),
   },
   {
@@ -52,8 +47,7 @@ const PLATFORMS = [
     name: "SoundCloud",
     icon: "🎶",
     placeholder: "https://soundcloud.com/artist/track-name",
-    hint: "Extract original audio streams and tracks",
-    sample: "https://soundcloud.com/artist/track",
+    hint: "Extract high quality original SoundCloud audio tracks",
     match: (url) => url.includes("soundcloud.com"),
   },
   {
@@ -62,7 +56,6 @@ const PLATFORMS = [
     icon: "📌",
     placeholder: "https://www.pinterest.com/pin/... or pin.it/...",
     hint: "Download Pinterest videos, ideas, and animated pins",
-    sample: "https://www.pinterest.com/pin/12345678/",
     match: (url) => url.includes("pinterest.com") || url.includes("pin.it"),
   },
   {
@@ -71,7 +64,6 @@ const PLATFORMS = [
     icon: "📘",
     placeholder: "https://www.facebook.com/watch/?v=...",
     hint: "Download public Facebook videos & reels",
-    sample: "https://www.facebook.com/watch/?v=12345",
     match: (url) => url.includes("facebook.com") || url.includes("fb.watch"),
   },
 ];
@@ -102,13 +94,13 @@ export default function Page() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [debugError, setDebugError] = useState(null);
   const [result, setResult] = useState(null);
-  const [filterCategory, setFilterCategory] = useState("all"); // 'all' | 'combined' | 'video' | 'audio'
+  const [filterCategory, setFilterCategory] = useState("all");
   const [detectedPlatform, setDetectedPlatform] = useState(null);
 
   const activePlatform = PLATFORMS.find((p) => p.id === activePlatformTab) || PLATFORMS[0];
 
-  // Auto detect platform when URL changes
   useEffect(() => {
     const trimmed = url.trim().toLowerCase();
     if (!trimmed) {
@@ -116,11 +108,7 @@ export default function Page() {
       return;
     }
     const matched = PLATFORMS.find((p) => p.match && p.match(trimmed));
-    if (matched) {
-      setDetectedPlatform(matched);
-    } else {
-      setDetectedPlatform(null);
-    }
+    setDetectedPlatform(matched || null);
   }, [url]);
 
   async function handlePaste() {
@@ -129,14 +117,13 @@ export default function Page() {
       if (text) {
         setUrl(text.trim());
       }
-    } catch {
-      // Permission denied or unavailable
-    }
+    } catch {}
   }
 
   function handleClear() {
     setUrl("");
     setError(null);
+    setDebugError(null);
     setResult(null);
   }
 
@@ -147,6 +134,7 @@ export default function Page() {
 
     setLoading(true);
     setError(null);
+    setDebugError(null);
     setResult(null);
 
     try {
@@ -157,7 +145,8 @@ export default function Page() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Could not read or extract media from that URL.");
+        setError(data.error || "Could not extract media from that URL.");
+        setDebugError(data.debugError || null);
       } else {
         setResult(data);
         setFilterCategory("all");
@@ -180,7 +169,6 @@ export default function Page() {
     return `/api/download?${params.toString()}`;
   }
 
-  // Filter formats based on active category
   const filteredFormats = (result?.formats || []).filter((f) => {
     if (filterCategory === "combined") return f.isCombined;
     if (filterCategory === "video") return f.hasVideo && !f.hasAudio;
@@ -190,30 +178,32 @@ export default function Page() {
 
   return (
     <div className="shell">
-      {/* Topbar branding */}
+      {/* Top Bar Header */}
       <header className="topbar">
-        <div className="wordmark">
-          <span className="logo-icon">⚡</span>
-          SIGNAL<span className="slash">/</span>GRAB
+        <div className="brand">
+          <div className="logo-badge">⚡</div>
+          <div className="wordmark">
+            MediaFetcher <span>Pro</span>
+          </div>
         </div>
-        <div className={`waveform ${loading ? "active" : ""}`}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <span key={i} />
-          ))}
+
+        <div className="status-pill">
+          <span className={`pulse-dot ${loading ? "loading" : ""}`} />
+          <span>{loading ? "Extracting Streams..." : "Engine Ready"}</span>
         </div>
-        <div className="tag">yt-dlp v2026.08</div>
       </header>
 
-      {/* Hero section */}
+      {/* Hero Section */}
       <section className="hero">
+        <div className="hero-pill">✨ MULTI-PLATFORM MEDIA EXTRACTION HUB</div>
         <h1>
-          Multi-Platform <em>Media Downloader</em>
+          Download High Quality <em>Videos & Audio</em>
         </h1>
         <p>
-          Extract highest quality video and audio streams from YouTube, Instagram, TikTok, X, SoundCloud, and 1000+ platforms.
+          Extract original format streams across YouTube, Instagram, TikTok, X/Twitter, SoundCloud, and 1000+ sites with direct CDN links and proxy downloads.
         </p>
 
-        {/* Platform Selection Tabs */}
+        {/* Platform Selection Bar */}
         <div className="platform-nav" role="tablist">
           {PLATFORMS.map((p) => (
             <button
@@ -228,15 +218,15 @@ export default function Page() {
           ))}
         </div>
 
-        {/* Dynamic platform info tip */}
+        {/* Platform Helper Tip */}
         <div className="platform-tip">
           <span className="tip-badge">{activePlatform.icon} {activePlatform.name}</span>
           <span className="tip-text">{activePlatform.hint}</span>
         </div>
 
-        {/* Input prompt form */}
+        {/* Search Input Form */}
         <form className="prompt" onSubmit={handleSubmit}>
-          <span className="caret">{detectedPlatform ? detectedPlatform.icon : "$"}</span>
+          <span className="caret">{detectedPlatform ? detectedPlatform.icon : "🔗"}</span>
           <input
             type="url"
             required
@@ -248,7 +238,7 @@ export default function Page() {
 
           {url ? (
             <button type="button" className="btn-icon" onClick={handleClear} title="Clear URL input">
-              ✕
+              ✕ Clear
             </button>
           ) : (
             <button type="button" className="btn-paste" onClick={handlePaste} title="Paste link from clipboard">
@@ -261,30 +251,33 @@ export default function Page() {
           </button>
         </form>
 
-        {/* Detected platform banner */}
+        {/* Auto Platform Match Banner */}
         {detectedPlatform && detectedPlatform.id !== activePlatformTab && (
           <div className="detected-banner">
-            <span>Detected <strong>{detectedPlatform.name}</strong> link!</span>
+            <span>Detected <strong>{detectedPlatform.name}</strong> URL link</span>
             <button
               type="button"
               className="btn-switch-tab"
               onClick={() => setActivePlatformTab(detectedPlatform.id)}
             >
-              Switch to {detectedPlatform.name} tab
+              Switch to {detectedPlatform.name} mode
             </button>
           </div>
         )}
 
-        {/* Error notification banner */}
+        {/* Error Notification */}
         {error && (
           <div className="error-banner">
             <span className="err-icon">⚠️</span>
-            <div className="err-content">{error}</div>
+            <div className="err-body">
+              <div><strong>Extraction Notice:</strong> {error}</div>
+              {debugError && <div className="err-details">Debug Log: {debugError}</div>}
+            </div>
           </div>
         )}
       </section>
 
-      {/* Result presentation section */}
+      {/* Results View */}
       {result ? (
         <section className="result">
           <div className="result-head">
@@ -305,17 +298,17 @@ export default function Page() {
                 </span>
                 {result.uploader && <span className="badge">👤 {result.uploader}</span>}
                 {result.viewCount && <span className="badge">👁️ {result.viewCount.toLocaleString()} views</span>}
-                <span className="badge">{result.formats.length} formats available</span>
+                <span className="badge">{result.formats.length} formats</span>
               </div>
             </div>
           </div>
 
-          {/* Quick 1-Click Download Options */}
+          {/* Quick Instant Downloads Grid */}
           {result.quickOptions && (
             <div className="quick-section">
               <h3 className="section-title">⚡ Instant Downloads</h3>
               <div className="quick-grid">
-                {/* Quick Video Option */}
+                {/* Best Video Card */}
                 {result.quickOptions.bestCombined && (
                   <div className="quick-card video-card">
                     <div className="quick-badge">🎬 Best Video + Audio</div>
@@ -323,7 +316,7 @@ export default function Page() {
                       {result.quickOptions.bestCombined.resolution} · {result.quickOptions.bestCombined.ext.toUpperCase()}
                     </div>
                     <div className="quick-sub">
-                      {formatBytes(result.quickOptions.bestCombined.filesize)} · High Quality Stream
+                      {formatBytes(result.quickOptions.bestCombined.filesize)} · High Resolution Video
                     </div>
                     <div className="quick-actions">
                       <a
@@ -332,7 +325,7 @@ export default function Page() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Direct Link 🔗
+                        Direct Stream 🔗
                       </a>
                       <a
                         className="btn-quick primary"
@@ -344,15 +337,15 @@ export default function Page() {
                   </div>
                 )}
 
-                {/* Quick Audio Option */}
+                {/* Best Audio Card */}
                 {result.quickOptions.bestAudio && (
                   <div className="quick-card audio-card">
-                    <div className="quick-badge">🎧 Best Audio / MP3</div>
+                    <div className="quick-badge">🎧 Best Audio Track / MP3</div>
                     <div className="quick-title">
                       {result.quickOptions.bestAudio.resolution} · {result.quickOptions.bestAudio.ext.toUpperCase()}
                     </div>
                     <div className="quick-sub">
-                      {formatBytes(result.quickOptions.bestAudio.filesize)} · Clean Audio Track
+                      {formatBytes(result.quickOptions.bestAudio.filesize)} · High Quality Audio
                     </div>
                     <div className="quick-actions">
                       <a
@@ -361,7 +354,7 @@ export default function Page() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Direct Link 🔗
+                        Direct Stream 🔗
                       </a>
                       <a
                         className="btn-quick primary"
@@ -376,11 +369,10 @@ export default function Page() {
             </div>
           )}
 
-          {/* Format Table Header Controls */}
+          {/* Format Table Header */}
           <div className="formats-header">
-            <h3>All Extraction Formats ({filteredFormats.length})</h3>
+            <h3>All Extracted Formats ({filteredFormats.length})</h3>
 
-            {/* Filter Tabs */}
             <div className="filter-tabs" role="tablist">
               <button
                 type="button"
@@ -413,7 +405,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Formats list */}
+          {/* Format Rows List */}
           <div className="formats">
             {filteredFormats.length === 0 ? (
               <div className="no-formats">No formats found matching this category filter.</div>
@@ -441,14 +433,14 @@ export default function Page() {
                       href={f.directUrl}
                       target="_blank"
                       rel="noreferrer"
-                      title="Open direct CDN URL in new tab"
+                      title="Open direct CDN URL"
                     >
                       Direct
                     </a>
                     <a
                       className="btn-ghost primary"
                       href={getDownloadHref(f.formatId, f.ext)}
-                      title="Download file through server proxy"
+                      title="Download stream via server proxy"
                     >
                       Download
                     </a>
@@ -462,17 +454,17 @@ export default function Page() {
         !loading && (
           <div className="empty">
             <span className="empty-icon">📥</span>
-            <div>Paste a link above to fetch all available video & audio formats</div>
+            <div className="empty-title">Paste a URL above to extract media formats</div>
             <div className="empty-sub">
-              Supported: YouTube, Instagram Reels & Posts, TikTok, X (Twitter), SoundCloud, Pinterest, Facebook & 1000+ more
+              Supports YouTube Videos & Shorts, Instagram Reels, TikTok, Twitter/X, SoundCloud, Pinterest, Facebook & 1000+ sites
             </div>
           </div>
         )
       )}
 
-      {/* Footer details */}
+      {/* Footer Disclaimer */}
       <footer className="note">
-        <strong>Direct Links</strong> open media streams straight from source CDNs. <strong>Download</strong> proxies the file through the server to guarantee compatibility across all browsers. Only download content you have permission to access in accordance with applicable copyright laws and platform Terms of Service.
+        <strong>Direct Links</strong> connect straight to source CDNs. <strong>Download</strong> proxies media streams through the server for cross-browser file saving. Ensure you have the rights to download content in accordance with copyright regulations and platform Terms of Service.
       </footer>
     </div>
   );
