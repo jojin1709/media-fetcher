@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import ffmpegPath from "ffmpeg-static";
-import { getYtDlpPath, getCookiesFile, getProxyUrl } from "../../../lib/get-yt-dlp";
+import { getYtDlpPath, getSharedYtDlpConfig } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -57,8 +57,6 @@ export async function GET(req) {
   }
 
   const binPath = await getYtDlpPath();
-  const cookiesPath = getCookiesFile();
-  const proxyUrl = getProxyUrl();
 
   // Resolve format argument cleanly
   let formatArg = rawFormat;
@@ -77,40 +75,50 @@ export async function GET(req) {
     formatArg = `${rawFormat.trim()}+bestaudio/best`;
   }
 
-  const baseArgs = [
-    url,
-    "-f",
-    formatArg,
-    "-o",
-    "-",
-    "--no-warnings",
-    "--no-check-certificates",
-    "--no-part",
-    "--no-playlist",
-    "--geo-bypass",
-    "--add-header",
-    "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "--add-header",
-    "referer:https://www.google.com/",
-  ];
+  const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
+  const clientTiers = isYouTube
+    ? ["android,ios,tv", "android_vr,tv_embedded,web_embedded", "web_embedded,mweb", ""]
+    : [""];
 
-  if (ffmpegPath) {
-    baseArgs.push("--ffmpeg-location", ffmpegPath);
-  }
+  async function spawnWithClientTier(playerClient) {
+    const { cookiesPath, proxyUrl } = getSharedYtDlpConfig(url, playerClient);
 
-  if (cookiesPath) {
-    baseArgs.push("--cookies", cookiesPath);
-  }
+    const args = [
+      url,
+      "-f",
+      formatArg,
+      "-o",
+      "-",
+      "--no-warnings",
+      "--no-check-certificates",
+      "--no-part",
+      "--no-playlist",
+      "--geo-bypass",
+      "--add-header",
+      "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "--add-header",
+      "referer:https://www.google.com/",
+    ];
 
-  if (proxyUrl) {
-    baseArgs.push("--proxy", proxyUrl);
-  }
+    if (playerClient) {
+      args.push("--extractor-args", `youtube:player_client=${playerClient}`);
+    }
 
-  async function spawnYtDlp(extraArgs = []) {
-    const fullArgs = [...baseArgs, ...extraArgs];
-    console.log(`[download] Executing yt-dlp ${binPath} with args:`, fullArgs.join(" "));
+    if (ffmpegPath) {
+      args.push("--ffmpeg-location", ffmpegPath);
+    }
 
-    const child = spawn(binPath, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    if (cookiesPath) {
+      args.push("--cookies", cookiesPath);
+    }
+
+    if (proxyUrl) {
+      args.push("--proxy", proxyUrl);
+    }
+
+    console.log(`[download] Executing yt-dlp (client: ${playerClient || 'default'}) with format: ${formatArg}`);
+
+    const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderrTail = "";
 
     child.stderr.on("data", (chunk) => {
@@ -149,44 +157,21 @@ export async function GET(req) {
     return { child, firstChunk, stderrTail };
   }
 
-  const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
   let activeChild = null;
   let firstChunk = null;
   let lastError = null;
 
-  // Attempt 1: Standard Execution
-  try {
-    const res1 = await spawnYtDlp([]);
-    activeChild = res1.child;
-    firstChunk = res1.firstChunk;
-  } catch (err1) {
-    lastError = err1?.message || String(err1);
-    console.warn("[download] Attempt 1 failed:", lastError);
-  }
-
-  // Attempt 2 (YouTube Bot Challenge Fallback): Retry with web_embedded,android client
-  if (!firstChunk && isYouTube) {
+  for (const clientTier of clientTiers) {
     try {
-      console.log("[download] Retrying with extractorArgs (web_embedded,android)...");
-      const res2 = await spawnYtDlp(["--extractor-args", "youtube:player_client=web_embedded,android"]);
-      activeChild = res2.child;
-      firstChunk = res2.firstChunk;
-    } catch (err2) {
-      lastError = err2?.message || String(err2);
-      console.warn("[download] Attempt 2 failed:", lastError);
-    }
-  }
-
-  // Attempt 3: Retry with tv_embedded,mweb client
-  if (!firstChunk && isYouTube) {
-    try {
-      console.log("[download] Retrying with extractorArgs (tv_embedded,mweb)...");
-      const res3 = await spawnYtDlp(["--extractor-args", "youtube:player_client=tv_embedded,mweb"]);
-      activeChild = res3.child;
-      firstChunk = res3.firstChunk;
-    } catch (err3) {
-      lastError = err3?.message || String(err3);
-      console.warn("[download] Attempt 3 failed:", lastError);
+      const res = await spawnWithClientTier(clientTier);
+      if (res.firstChunk) {
+        activeChild = res.child;
+        firstChunk = res.firstChunk;
+        break;
+      }
+    } catch (err) {
+      lastError = err?.message || String(err);
+      console.warn(`[download] Client tier "${clientTier}" failed:`, lastError);
     }
   }
 
