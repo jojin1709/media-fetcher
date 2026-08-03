@@ -17,7 +17,7 @@ export async function GET(req) {
     });
   }
 
-  // Safe filename sanitization: asciiFilename for filename="..." header, encodedFilename for filename*=UTF-8''...
+  // Safe filename sanitization
   const safeFilename = rawFilename
     .replace(/[/\\?%*:|"<>]/g, "_")
     .replace(/\s+/g, " ")
@@ -59,8 +59,16 @@ export async function GET(req) {
   const cookiesPath = getCookiesFile();
   const proxyUrl = getProxyUrl();
 
+  // Resolve format argument cleanly (handles fb_2160, fb_1080, fb_audio, best, bestaudio, and numeric IDs)
   let formatArg = rawFormat;
-  if (rawFormat === "best") {
+  if (rawFormat.startsWith("fb_")) {
+    const resHeight = rawFormat.replace("fb_", "");
+    if (resHeight === "audio") {
+      formatArg = "bestaudio/best";
+    } else {
+      formatArg = `best[height<=${resHeight}]/bestvideo[height<=${resHeight}]+bestaudio/best`;
+    }
+  } else if (rawFormat === "best") {
     formatArg = "best[ext=mp4]/bestvideo+bestaudio/best";
   } else if (rawFormat === "bestaudio") {
     formatArg = "bestaudio/best";
