@@ -439,7 +439,7 @@ export default function Page() {
                     </a>
                     <a
                       className="btn-ghost primary"
-                      href={getDownloadHref(f.formatId, f.ext)}
+                      href={getDownloadHref(f.downloadSpec || f.formatId, f.ext)}
                       title="Download stream via server proxy"
                     >
                       Download

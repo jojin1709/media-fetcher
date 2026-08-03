@@ -74,12 +74,11 @@ export async function POST(req) {
   try {
     const info = await runYtDlp(cleanUrl);
 
-
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
     
-    // Parse formats
+    // Parse all formats
     const processedFormats = rawFormats
-      .filter((f) => f.url && (f.vcodec !== "none" || f.acodec !== "none"))
+      .filter((f) => f.url && (f.vcodec !== "none" || f.acodec !== "none") && f.ext !== "mhtml")
       .map((f) => {
         const hasVideo = Boolean(f.vcodec && f.vcodec !== "none");
         const hasAudio = Boolean(f.acodec && f.acodec !== "none");
@@ -91,8 +90,12 @@ export async function POST(req) {
         if (hasVideo && !hasAudio) typeLabel = "Video Only";
         if (!hasVideo && hasAudio) typeLabel = "Audio Only";
 
+        // For video-only DASH formats, specifier merges with best audio on download
+        const downloadSpec = (hasVideo && !hasAudio) ? `${f.format_id}+bestaudio/best` : f.format_id;
+
         return {
           formatId: f.format_id,
+          downloadSpec,
           ext: f.ext || (hasVideo ? "mp4" : "mp3"),
           resolution,
           height: f.height || 0,
@@ -157,44 +160,55 @@ export async function POST(req) {
           const thumbnail = oembed.thumbnail_url || null;
           const uploader = oembed.author_name || null;
 
-          const formats = [
-            {
-              formatId: "best",
-              ext: "mp4",
-              resolution: "1080p (FHD)",
-              height: 1080,
-              fps: 30,
-              vcodec: "h264",
-              acodec: "aac",
-              note: "Best High-Res Stream",
-              filesize: null,
-              hasVideo: true,
-              hasAudio: true,
-              isCombined: true,
-              typeLabel: "Combined",
-              directUrl: cleanUrl,
-              tbr: 0,
-              abr: 0,
-            },
-            {
-              formatId: "bestaudio",
-              ext: "mp3",
-              resolution: "Audio (320kbps)",
-              height: 0,
-              fps: null,
-              vcodec: "none",
-              acodec: "mp3",
-              note: "Best Audio Track",
-              filesize: null,
-              hasVideo: false,
-              hasAudio: true,
-              isCombined: false,
-              typeLabel: "Audio Only",
-              directUrl: cleanUrl,
-              tbr: 0,
-              abr: 320,
-            },
+          const fallbackResolutions = [
+            { res: "2160p (4K)", height: 2160, note: "4K Ultra HD Video", spec: "bestvideo[height<=2160]+bestaudio/best" },
+            { res: "1440p (2K)", height: 1440, note: "2K Quad HD Video", spec: "bestvideo[height<=1440]+bestaudio/best" },
+            { res: "1080p (FHD)", height: 1080, note: "Full HD Video", spec: "bestvideo[height<=1080]+bestaudio/best" },
+            { res: "720p (HD)", height: 720, note: "HD Video Stream", spec: "bestvideo[height<=720]+bestaudio/best" },
+            { res: "480p", height: 480, note: "SD Video Stream", spec: "bestvideo[height<=480]+bestaudio/best" },
+            { res: "360p", height: 360, note: "Mobile Video Stream", spec: "bestvideo[height<=360]+bestaudio/best" },
           ];
+
+          const formats = fallbackResolutions.map((r, i) => ({
+            formatId: `fb_${r.height}`,
+            downloadSpec: r.spec,
+            ext: "mp4",
+            resolution: r.res,
+            height: r.height,
+            fps: 30,
+            vcodec: "h264",
+            acodec: "aac",
+            note: r.note,
+            filesize: null,
+            hasVideo: true,
+            hasAudio: true,
+            isCombined: true,
+            typeLabel: "Combined",
+            directUrl: cleanUrl,
+            tbr: 0,
+            abr: 0,
+          }));
+
+          // Add Audio format
+          formats.push({
+            formatId: "fb_audio",
+            downloadSpec: "bestaudio/best",
+            ext: "mp3",
+            resolution: "Audio (320kbps)",
+            height: 0,
+            fps: null,
+            vcodec: "none",
+            acodec: "mp3",
+            note: "High Quality Audio Track",
+            filesize: null,
+            hasVideo: false,
+            hasAudio: true,
+            isCombined: false,
+            typeLabel: "Audio Only",
+            directUrl: cleanUrl,
+            tbr: 0,
+            abr: 320,
+          });
 
           return NextResponse.json({
             title,
@@ -207,9 +221,9 @@ export async function POST(req) {
             platform,
             originalUrl: cleanUrl,
             quickOptions: {
-              bestCombined: formats[0],
-              bestVideo: formats[0],
-              bestAudio: formats[1],
+              bestCombined: formats[2] || formats[0], // 1080p
+              bestVideo: formats[2] || formats[0],
+              bestAudio: formats[formats.length - 1],
             },
             formats,
           });
@@ -236,4 +250,3 @@ export async function POST(req) {
     return NextResponse.json({ error: message, debugError: rawError }, { status: 422 });
   }
 }
-

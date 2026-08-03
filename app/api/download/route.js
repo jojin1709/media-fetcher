@@ -32,6 +32,9 @@ export async function GET(req) {
     formatArg = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best";
   } else if (rawFormat === "bestaudio") {
     formatArg = "bestaudio/best";
+  } else if (/^\d+$/.test(rawFormat.trim())) {
+    // If user selected a specific numeric video format ID, merge with best audio stream on demand
+    formatArg = `${rawFormat.trim()}+bestaudio/best`;
   }
 
   const args = [
