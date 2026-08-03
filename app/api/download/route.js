@@ -42,10 +42,11 @@ export async function GET(req) {
     "--no-check-certificates",
     "--no-part",
     "--no-playlist",
+    "--geo-bypass",
     "--extractor-args",
-    "youtube:player_client=android,mweb,web",
+    "youtube:player_client=ios,mweb",
     "--add-header",
-    "user-agent:Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
     "--add-header",
     "referer:https://www.google.com/",
   ];
