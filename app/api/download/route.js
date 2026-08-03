@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { getYtDlpPath } from "../../../lib/get-yt-dlp";
+import { getYtDlpPath, getCookiesFile, getProxyUrl } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -18,6 +18,8 @@ export async function GET(req) {
   }
 
   const binPath = await getYtDlpPath();
+  const cookiesPath = getCookiesFile();
+  const proxyUrl = getProxyUrl();
 
   // Safe filename sanitization
   const safeFilename = rawFilename
@@ -42,14 +44,22 @@ export async function GET(req) {
     "--no-check-certificates",
     "--no-part",
     "--no-playlist",
+    "--geo-bypass",
     "--add-header",
     "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "--add-header",
     "referer:https://www.google.com/",
   ];
 
-  const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+  if (cookiesPath) {
+    args.push("--cookies", cookiesPath);
+  }
 
+  if (proxyUrl) {
+    args.push("--proxy", proxyUrl);
+  }
+
+  const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
   let stderrTail = "";
   child.stderr.on("data", (chunk) => {
@@ -94,4 +104,3 @@ export async function GET(req) {
     },
   });
 }
-
