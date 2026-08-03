@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import ffmpegPath from "ffmpeg-static";
-import { getYtDlpPath, getSharedYtDlpConfig } from "../../../lib/get-yt-dlp";
+import { getYtDlpPath, writeCookiesFile, cleanupCookiesFile, getProxyUrl } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -57,6 +57,8 @@ export async function GET(req) {
   }
 
   const binPath = await getYtDlpPath();
+  const cookiesPath = writeCookiesFile();
+  const proxyUrl = getProxyUrl();
 
   // Resolve format argument cleanly
   let formatArg = rawFormat;
@@ -75,110 +77,87 @@ export async function GET(req) {
     formatArg = `${rawFormat.trim()}+bestaudio/best`;
   }
 
-  const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
-  const clientTiers = isYouTube
-    ? ["android,ios,tv", "android_vr,tv_embedded,web_embedded", "web_embedded,mweb", ""]
-    : [""];
+  const args = [
+    url,
+    "-f",
+    formatArg,
+    "-o",
+    "-",
+    "--no-warnings",
+    "--no-check-certificates",
+    "--no-part",
+    "--no-playlist",
+    "--geo-bypass",
+    "--add-header",
+    "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "--add-header",
+    "referer:https://www.google.com/",
+  ];
 
-  async function spawnWithClientTier(playerClient) {
-    const { cookiesPath, proxyUrl } = getSharedYtDlpConfig(url, playerClient);
-
-    const args = [
-      url,
-      "-f",
-      formatArg,
-      "-o",
-      "-",
-      "--no-warnings",
-      "--no-check-certificates",
-      "--no-part",
-      "--no-playlist",
-      "--geo-bypass",
-      "--add-header",
-      "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-      "--add-header",
-      "referer:https://www.google.com/",
-    ];
-
-    if (playerClient) {
-      args.push("--extractor-args", `youtube:player_client=${playerClient}`);
-    }
-
-    if (ffmpegPath) {
-      args.push("--ffmpeg-location", ffmpegPath);
-    }
-
-    if (cookiesPath) {
-      args.push("--cookies", cookiesPath);
-    }
-
-    if (proxyUrl) {
-      args.push("--proxy", proxyUrl);
-    }
-
-    console.log(`[download] Executing yt-dlp (client: ${playerClient || 'default'}) with format: ${formatArg}`);
-
-    const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stderrTail = "";
-
-    child.stderr.on("data", (chunk) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-2000);
-    });
-
-    const firstChunk = await new Promise((resolve, reject) => {
-      let resolved = false;
-
-      child.stdout.once("data", (chunk) => {
-        if (!resolved) {
-          resolved = true;
-          resolve(chunk);
-        }
-      });
-
-      child.on("error", (err) => {
-        if (!resolved) {
-          resolved = true;
-          reject(err);
-        }
-      });
-
-      child.on("close", (code) => {
-        if (!resolved) {
-          resolved = true;
-          if (code !== 0) {
-            reject(new Error(stderrTail || `yt-dlp exited with code ${code}`));
-          } else {
-            resolve(null);
-          }
-        }
-      });
-    });
-
-    return { child, firstChunk, stderrTail };
+  if (ffmpegPath) {
+    args.push("--ffmpeg-location", ffmpegPath);
   }
 
-  let activeChild = null;
-  let firstChunk = null;
-  let lastError = null;
+  if (cookiesPath) {
+    args.push("--cookies", cookiesPath);
+    console.log(`[download] Executing authenticated stream download with cookies file: ${cookiesPath}`);
+  } else {
+    console.log("[download] Spawning yt-dlp without cookies file (YOUTUBE_COOKIES_B64 is not set)");
+  }
 
-  for (const clientTier of clientTiers) {
-    try {
-      const res = await spawnWithClientTier(clientTier);
-      if (res.firstChunk) {
-        activeChild = res.child;
-        firstChunk = res.firstChunk;
-        break;
+  if (proxyUrl) {
+    args.push("--proxy", proxyUrl);
+  }
+
+  console.log(`[download] Spawning yt-dlp ${binPath} with format: ${formatArg}`);
+
+  const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+  let stderrTail = "";
+
+  child.stderr.on("data", (chunk) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+  });
+
+  const firstChunkPromise = new Promise((resolve, reject) => {
+    let resolved = false;
+
+    child.stdout.once("data", (chunk) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(chunk);
       }
-    } catch (err) {
-      lastError = err?.message || String(err);
-      console.warn(`[download] Client tier "${clientTier}" failed:`, lastError);
-    }
-  }
+    });
 
-  if (!firstChunk || !activeChild) {
-    let userNotice = lastError || "Stream extraction failed.";
-    if (userNotice.includes("Sign in to confirm you're not a bot")) {
-      userNotice += " [Tip: Add YOUTUBE_COOKIES_B64 to Vercel Environment Variables to authorize cloud IP requests]";
+    child.on("error", (err) => {
+      if (!resolved) {
+        resolved = true;
+        reject(err);
+      }
+    });
+
+    child.on("close", (code) => {
+      if (!resolved) {
+        resolved = true;
+        if (code !== 0) {
+          reject(new Error(stderrTail || `yt-dlp exited with code ${code}`));
+        } else {
+          resolve(null);
+        }
+      }
+    });
+  });
+
+  let firstChunk;
+  try {
+    firstChunk = await firstChunkPromise;
+  } catch (err) {
+    cleanupCookiesFile(cookiesPath);
+    const errorMsg = err?.message || String(err);
+    console.error("[download] Stream extraction failed:", errorMsg);
+
+    let userNotice = errorMsg;
+    if (errorMsg.includes("Sign in to confirm you're not a bot")) {
+      userNotice = "YouTube requires authentication. Please set YOUTUBE_COOKIES_B64 in your Vercel Environment Variables.";
     }
 
     return new Response(JSON.stringify({ error: "Download stream extraction failed.", debugError: userNotice }), {
@@ -187,32 +166,42 @@ export async function GET(req) {
     });
   }
 
-  const childProcess = activeChild;
+  if (!firstChunk) {
+    cleanupCookiesFile(cookiesPath);
+    console.error("[download] 0 bytes produced by yt-dlp. stderr:", stderrTail);
+    return new Response(JSON.stringify({ error: "Download stream produced 0 bytes.", debugError: stderrTail || "Empty output stream" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(firstChunk);
 
-      childProcess.stdout.on("data", (chunk) => {
+      child.stdout.on("data", (chunk) => {
         try {
           controller.enqueue(chunk);
         } catch {}
       });
 
-      childProcess.stdout.on("end", () => {
+      child.stdout.on("end", () => {
         try {
           controller.close();
         } catch {}
+        cleanupCookiesFile(cookiesPath);
       });
 
-      childProcess.on("error", (err) => {
+      child.on("error", (err) => {
         try {
           controller.error(err);
         } catch {}
+        cleanupCookiesFile(cookiesPath);
       });
     },
     cancel() {
-      childProcess.kill("SIGKILL");
+      child.kill("SIGKILL");
+      cleanupCookiesFile(cookiesPath);
     },
   });
 
