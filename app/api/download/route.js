@@ -58,7 +58,7 @@ export async function GET(req) {
 
   const binPath = await getYtDlpPath();
   const cookiesPath = writeCookiesFile();
-  const proxyUrl = getProxyUrl();
+  const proxyUrl = await getProxyUrl();
 
   // Resolve format argument cleanly
   let formatArg = rawFormat;
