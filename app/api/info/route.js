@@ -4,6 +4,59 @@ import youtubedl from "youtube-dl-exec";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function detectPlatform(url, extractorKey) {
+  const lowerUrl = url.toLowerCase();
+  const lowerExtractor = (extractorKey || "").toLowerCase();
+
+  if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be") || lowerExtractor.includes("youtube")) {
+    return { id: "youtube", name: "YouTube", icon: "🔴" };
+  }
+  if (lowerUrl.includes("instagram.com") || lowerExtractor.includes("instagram")) {
+    return { id: "instagram", name: "Instagram", icon: "📸" };
+  }
+  if (lowerUrl.includes("tiktok.com") || lowerExtractor.includes("tiktok")) {
+    return { id: "tiktok", name: "TikTok", icon: "🎵" };
+  }
+  if (lowerUrl.includes("twitter.com") || lowerUrl.includes("x.com") || lowerExtractor.includes("twitter")) {
+    return { id: "twitter", name: "Twitter / X", icon: "🐦" };
+  }
+  if (lowerUrl.includes("soundcloud.com") || lowerExtractor.includes("soundcloud")) {
+    return { id: "soundcloud", name: "SoundCloud", icon: "🎶" };
+  }
+  if (lowerUrl.includes("pinterest.com") || lowerUrl.includes("pin.it") || lowerExtractor.includes("pinterest")) {
+    return { id: "pinterest", name: "Pinterest", icon: "📌" };
+  }
+  if (lowerUrl.includes("facebook.com") || lowerUrl.includes("fb.watch") || lowerExtractor.includes("facebook")) {
+    return { id: "facebook", name: "Facebook", icon: "📘" };
+  }
+  if (lowerUrl.includes("vimeo.com") || lowerExtractor.includes("vimeo")) {
+    return { id: "vimeo", name: "Vimeo", icon: "🎬" };
+  }
+  if (lowerUrl.includes("twitch.tv") || lowerExtractor.includes("twitch")) {
+    return { id: "twitch", name: "Twitch", icon: "🟣" };
+  }
+  if (lowerUrl.includes("reddit.com") || lowerExtractor.includes("reddit")) {
+    return { id: "reddit", name: "Reddit", icon: "🤖" };
+  }
+
+  return { id: "general", name: extractorKey || "Web Stream", icon: "🌐" };
+}
+
+function formatResolutionString(f) {
+  if (!f.vcodec || f.vcodec === "none") {
+    const abr = f.abr ? `${Math.round(f.abr)}kbps` : "";
+    return abr ? `Audio (${abr})` : "Audio Track";
+  }
+  if (f.height) {
+    if (f.height >= 2160) return `${f.height}p (4K)`;
+    if (f.height >= 1440) return `${f.height}p (2K)`;
+    if (f.height >= 1080) return `${f.height}p (FHD)`;
+    if (f.height >= 720) return `${f.height}p (HD)`;
+    return `${f.height}p`;
+  }
+  return f.resolution || "Video";
+}
+
 export async function POST(req) {
   let url;
   try {
@@ -13,53 +66,105 @@ export async function POST(req) {
   }
 
   if (!url || typeof url !== "string") {
-    return NextResponse.json({ error: "Missing url" }, { status: 400 });
+    return NextResponse.json({ error: "Missing url parameter" }, { status: 400 });
   }
 
+  const cleanUrl = url.trim();
+
   try {
-    const info = await youtubedl(url, {
+    const info = await youtubedl(cleanUrl, {
       dumpSingleJson: true,
       noWarnings: true,
       noCheckCertificates: true,
       preferFreeFormats: true,
-      addHeader: ["referer:youtube.com", "user-agent:googlebot"],
-      js: "deno",
+      addHeader: [
+        "referer:https://www.google.com/",
+        "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      ],
     });
 
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
-
-    const formats = rawFormats
+    
+    // Parse formats
+    const processedFormats = rawFormats
       .filter((f) => f.url && (f.vcodec !== "none" || f.acodec !== "none"))
-      .map((f) => ({
-        formatId: f.format_id,
-        ext: f.ext,
-        resolution:
-          f.vcodec && f.vcodec !== "none"
-            ? f.resolution || (f.height ? `${f.height}p` : "video")
-            : "audio only",
-        note: f.format_note || "",
-        filesize: f.filesize || f.filesize_approx || null,
-        hasVideo: f.vcodec !== "none",
-        hasAudio: f.acodec !== "none",
-        directUrl: f.url,
-      }))
-      // De-dupe near-identical entries and put the meatiest formats first
-      .sort((a, b) => (b.filesize || 0) - (a.filesize || 0));
+      .map((f) => {
+        const hasVideo = Boolean(f.vcodec && f.vcodec !== "none");
+        const hasAudio = Boolean(f.acodec && f.acodec !== "none");
+        const isCombined = hasVideo && hasAudio;
+        const resolution = formatResolutionString(f);
+        const filesize = f.filesize || f.filesize_approx || null;
+        
+        let typeLabel = "Combined";
+        if (hasVideo && !hasAudio) typeLabel = "Video Only";
+        if (!hasVideo && hasAudio) typeLabel = "Audio Only";
+
+        return {
+          formatId: f.format_id,
+          ext: f.ext || (hasVideo ? "mp4" : "mp3"),
+          resolution,
+          height: f.height || 0,
+          fps: f.fps || null,
+          vcodec: f.vcodec,
+          acodec: f.acodec,
+          note: f.format_note || "",
+          filesize,
+          hasVideo,
+          hasAudio,
+          isCombined,
+          typeLabel,
+          directUrl: f.url,
+          tbr: f.tbr || 0,
+          abr: f.abr || 0,
+        };
+      })
+      .sort((a, b) => (b.height || b.tbr || b.filesize || 0) - (a.height || a.tbr || a.filesize || 0));
+
+    // Platform identification
+    const platform = detectPlatform(cleanUrl, info.extractor_key || info.extractor);
+
+    // Identify Quick Downloads
+    const combinedFormats = processedFormats.filter((f) => f.isCombined);
+    const videoFormats = processedFormats.filter((f) => f.hasVideo);
+    const audioFormats = processedFormats.filter((f) => f.hasAudio && !f.hasVideo);
+
+    const bestCombined = combinedFormats[0] || videoFormats[0] || null;
+    const bestAudio = audioFormats.sort((a, b) => (b.abr || b.filesize || 0) - (a.abr || a.filesize || 0))[0] || null;
+    const bestVideo = videoFormats[0] || null;
 
     return NextResponse.json({
-      title: info.title || "Untitled",
-      thumbnail: info.thumbnail || null,
+      title: info.title || "Untitled Media",
+      description: info.description ? info.description.slice(0, 200) + "..." : null,
+      thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : null),
       durationSeconds: info.duration || null,
-      uploader: info.uploader || info.channel || null,
-      source: info.extractor_key || info.extractor || "unknown",
-      originalUrl: url,
-      formats,
+      uploader: info.uploader || info.channel || info.uploader_id || null,
+      viewCount: info.view_count || null,
+      likeCount: info.like_count || null,
+      platform,
+      originalUrl: cleanUrl,
+      quickOptions: {
+        bestCombined,
+        bestVideo,
+        bestAudio,
+      },
+      formats: processedFormats,
     });
   } catch (err) {
-    const message =
-      err?.stderr?.toString?.().split("\n").filter(Boolean).pop() ||
-      err?.message ||
-      "Could not read that URL";
+    const rawError = err?.stderr?.toString?.() || err?.message || "";
+    let message = "Could not extract media from that URL. Please verify the link and try again.";
+    
+    if (rawError.includes("Private video") || rawError.includes("login")) {
+      message = "This video or post appears to be private or requires login.";
+    } else if (rawError.includes("Incomplete YouTube ID") || rawError.includes("Not a valid URL")) {
+      message = "Invalid URL syntax. Please check the link structure.";
+    } else if (rawError.includes("Video unavailable") || rawError.includes("404")) {
+      message = "Media not found or has been removed by creator.";
+    } else {
+      const line = rawError.split("\n").filter((l) => l.startsWith("ERROR:")).pop();
+      if (line) message = line.replace(/^ERROR:\s*/, "");
+    }
+
     return NextResponse.json({ error: message }, { status: 422 });
   }
 }
+

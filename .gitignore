@@ -3,3 +3,10 @@ node_modules
 .vercel
 .env*
 *.log
+*.json
+!package.json
+!package-lock.json
+*.mp4
+*.ps1
+test-api.js
+test.txt
