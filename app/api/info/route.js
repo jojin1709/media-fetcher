@@ -23,6 +23,7 @@ export async function POST(req) {
       noCheckCertificates: true,
       preferFreeFormats: true,
       addHeader: ["referer:youtube.com", "user-agent:googlebot"],
+      js: "deno",
     });
 
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
