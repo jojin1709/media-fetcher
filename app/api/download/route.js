@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import ffmpegPath from "ffmpeg-static";
 import { getYtDlpPath, getCookiesFile, getProxyUrl } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ export async function GET(req) {
   const cookiesPath = getCookiesFile();
   const proxyUrl = getProxyUrl();
 
-  // Resolve format argument cleanly (handles fb_2160, fb_1080, fb_audio, best, bestaudio, and numeric IDs)
+  // Resolve format argument cleanly
   let formatArg = rawFormat;
   if (rawFormat.startsWith("fb_")) {
     const resHeight = rawFormat.replace("fb_", "");
@@ -73,7 +74,8 @@ export async function GET(req) {
   } else if (rawFormat === "bestaudio") {
     formatArg = "bestaudio/best";
   } else if (/^\d+$/.test(rawFormat.trim())) {
-    formatArg = `${rawFormat.trim()}/best`;
+    // Specific numeric format ID (e.g. video-only DASH stream), combine with bestaudio on demand
+    formatArg = `${rawFormat.trim()}+bestaudio/best`;
   }
 
   const args = [
@@ -93,6 +95,10 @@ export async function GET(req) {
     "referer:https://www.google.com/",
   ];
 
+  if (ffmpegPath) {
+    args.push("--ffmpeg-location", ffmpegPath);
+  }
+
   if (cookiesPath) {
     args.push("--cookies", cookiesPath);
   }
@@ -101,6 +107,8 @@ export async function GET(req) {
     args.push("--proxy", proxyUrl);
   }
 
+  console.log(`[download] Executing yt-dlp ${binPath} with args:`, args.join(" "));
+
   const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
   let stderrTail = "";
@@ -108,27 +116,76 @@ export async function GET(req) {
     stderrTail = (stderrTail + chunk.toString()).slice(-2000);
   });
 
+  // Wait for first data chunk OR error event before returning HTTP response headers
+  const firstChunkPromise = new Promise((resolve, reject) => {
+    let resolved = false;
+
+    child.stdout.once("data", (chunk) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(chunk);
+      }
+    });
+
+    child.on("error", (err) => {
+      if (!resolved) {
+        resolved = true;
+        reject(err);
+      }
+    });
+
+    child.on("close", (code) => {
+      if (!resolved) {
+        resolved = true;
+        if (code !== 0) {
+          reject(new Error(stderrTail || `yt-dlp exited with code ${code}`));
+        } else {
+          resolve(null);
+        }
+      }
+    });
+  });
+
+  let firstChunk;
+  try {
+    firstChunk = await firstChunkPromise;
+  } catch (err) {
+    const errorMsg = err?.message || String(err);
+    console.error("[download] Stream extraction failed:", errorMsg);
+    return new Response(JSON.stringify({ error: "Download stream extraction failed.", debugError: errorMsg }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (!firstChunk) {
+    console.error("[download] 0 bytes produced by yt-dlp. stderr:", stderrTail);
+    return new Response(JSON.stringify({ error: "Download stream produced 0 bytes.", debugError: stderrTail || "Empty output stream" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const stream = new ReadableStream({
     start(controller) {
+      controller.enqueue(firstChunk);
+
       child.stdout.on("data", (chunk) => {
         try {
           controller.enqueue(chunk);
-        } catch {
-          // controller closed by cancel
-        }
+        } catch {}
       });
+
       child.stdout.on("end", () => {
         try {
           controller.close();
         } catch {}
       });
-      child.on("error", (err) => controller.error(err));
-      child.on("close", (code) => {
-        if (code !== 0) {
-          try {
-            controller.error(new Error(stderrTail || `yt-dlp exited with code ${code}`));
-          } catch {}
-        }
+
+      child.on("error", (err) => {
+        try {
+          controller.error(err);
+        } catch {}
       });
     },
     cancel() {
