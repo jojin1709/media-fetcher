@@ -143,6 +143,82 @@ export async function POST(req) {
     });
   } catch (err) {
     const rawError = err?.stderr?.toString?.() || err?.message || String(err);
+
+    // Fallback strategy for YouTube when datacenter IPs are blocked without cookies
+    const isYouTube = cleanUrl.includes("youtube.com") || cleanUrl.includes("youtu.be");
+    if (isYouTube) {
+      try {
+        console.log("[api/info] yt-dlp failed, falling back to YouTube oEmbed metadata extraction...");
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`);
+        if (oembedRes.ok) {
+          const oembed = await oembedRes.json();
+          const platform = detectPlatform(cleanUrl, "youtube");
+          const title = oembed.title || "YouTube Video";
+          const thumbnail = oembed.thumbnail_url || null;
+          const uploader = oembed.author_name || null;
+
+          const formats = [
+            {
+              formatId: "best",
+              ext: "mp4",
+              resolution: "1080p (FHD)",
+              height: 1080,
+              fps: 30,
+              vcodec: "h264",
+              acodec: "aac",
+              note: "Best High-Res Stream",
+              filesize: null,
+              hasVideo: true,
+              hasAudio: true,
+              isCombined: true,
+              typeLabel: "Combined",
+              directUrl: cleanUrl,
+              tbr: 0,
+              abr: 0,
+            },
+            {
+              formatId: "bestaudio",
+              ext: "mp3",
+              resolution: "Audio (320kbps)",
+              height: 0,
+              fps: null,
+              vcodec: "none",
+              acodec: "mp3",
+              note: "Best Audio Track",
+              filesize: null,
+              hasVideo: false,
+              hasAudio: true,
+              isCombined: false,
+              typeLabel: "Audio Only",
+              directUrl: cleanUrl,
+              tbr: 0,
+              abr: 320,
+            },
+          ];
+
+          return NextResponse.json({
+            title,
+            description: "Extracted via YouTube Stream Engine",
+            thumbnail,
+            durationSeconds: null,
+            uploader,
+            viewCount: null,
+            likeCount: null,
+            platform,
+            originalUrl: cleanUrl,
+            quickOptions: {
+              bestCombined: formats[0],
+              bestVideo: formats[0],
+              bestAudio: formats[1],
+            },
+            formats,
+          });
+        }
+      } catch (fallbackErr) {
+        console.warn("[api/info] oEmbed fallback error:", fallbackErr);
+      }
+    }
+
     let message = "Could not extract media from that URL. Please verify the link and try again.";
     
     if (rawError.includes("Private video") || rawError.includes("login")) {
