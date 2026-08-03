@@ -74,11 +74,10 @@ export async function GET(req) {
   } else if (rawFormat === "bestaudio") {
     formatArg = "bestaudio/best";
   } else if (/^\d+$/.test(rawFormat.trim())) {
-    // Specific numeric format ID (e.g. video-only DASH stream), combine with bestaudio on demand
     formatArg = `${rawFormat.trim()}+bestaudio/best`;
   }
 
-  const args = [
+  const baseArgs = [
     url,
     "-f",
     formatArg,
@@ -96,100 +95,139 @@ export async function GET(req) {
   ];
 
   if (ffmpegPath) {
-    args.push("--ffmpeg-location", ffmpegPath);
+    baseArgs.push("--ffmpeg-location", ffmpegPath);
   }
 
   if (cookiesPath) {
-    args.push("--cookies", cookiesPath);
+    baseArgs.push("--cookies", cookiesPath);
   }
 
   if (proxyUrl) {
-    args.push("--proxy", proxyUrl);
+    baseArgs.push("--proxy", proxyUrl);
   }
 
-  console.log(`[download] Executing yt-dlp ${binPath} with args:`, args.join(" "));
+  async function spawnYtDlp(extraArgs = []) {
+    const fullArgs = [...baseArgs, ...extraArgs];
+    console.log(`[download] Executing yt-dlp ${binPath} with args:`, fullArgs.join(" "));
 
-  const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(binPath, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderrTail = "";
 
-  let stderrTail = "";
-  child.stderr.on("data", (chunk) => {
-    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
-  });
-
-  // Wait for first data chunk OR error event before returning HTTP response headers
-  const firstChunkPromise = new Promise((resolve, reject) => {
-    let resolved = false;
-
-    child.stdout.once("data", (chunk) => {
-      if (!resolved) {
-        resolved = true;
-        resolve(chunk);
-      }
+    child.stderr.on("data", (chunk) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-2000);
     });
 
-    child.on("error", (err) => {
-      if (!resolved) {
-        resolved = true;
-        reject(err);
-      }
-    });
+    const firstChunk = await new Promise((resolve, reject) => {
+      let resolved = false;
 
-    child.on("close", (code) => {
-      if (!resolved) {
-        resolved = true;
-        if (code !== 0) {
-          reject(new Error(stderrTail || `yt-dlp exited with code ${code}`));
-        } else {
-          resolve(null);
+      child.stdout.once("data", (chunk) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(chunk);
         }
-      }
-    });
-  });
+      });
 
-  let firstChunk;
+      child.on("error", (err) => {
+        if (!resolved) {
+          resolved = true;
+          reject(err);
+        }
+      });
+
+      child.on("close", (code) => {
+        if (!resolved) {
+          resolved = true;
+          if (code !== 0) {
+            reject(new Error(stderrTail || `yt-dlp exited with code ${code}`));
+          } else {
+            resolve(null);
+          }
+        }
+      });
+    });
+
+    return { child, firstChunk, stderrTail };
+  }
+
+  const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
+  let activeChild = null;
+  let firstChunk = null;
+  let lastError = null;
+
+  // Attempt 1: Standard Execution
   try {
-    firstChunk = await firstChunkPromise;
-  } catch (err) {
-    const errorMsg = err?.message || String(err);
-    console.error("[download] Stream extraction failed:", errorMsg);
-    return new Response(JSON.stringify({ error: "Download stream extraction failed.", debugError: errorMsg }), {
+    const res1 = await spawnYtDlp([]);
+    activeChild = res1.child;
+    firstChunk = res1.firstChunk;
+  } catch (err1) {
+    lastError = err1?.message || String(err1);
+    console.warn("[download] Attempt 1 failed:", lastError);
+  }
+
+  // Attempt 2 (YouTube Bot Challenge Fallback): Retry with web_embedded,android client
+  if (!firstChunk && isYouTube) {
+    try {
+      console.log("[download] Retrying with extractorArgs (web_embedded,android)...");
+      const res2 = await spawnYtDlp(["--extractor-args", "youtube:player_client=web_embedded,android"]);
+      activeChild = res2.child;
+      firstChunk = res2.firstChunk;
+    } catch (err2) {
+      lastError = err2?.message || String(err2);
+      console.warn("[download] Attempt 2 failed:", lastError);
+    }
+  }
+
+  // Attempt 3: Retry with tv_embedded,mweb client
+  if (!firstChunk && isYouTube) {
+    try {
+      console.log("[download] Retrying with extractorArgs (tv_embedded,mweb)...");
+      const res3 = await spawnYtDlp(["--extractor-args", "youtube:player_client=tv_embedded,mweb"]);
+      activeChild = res3.child;
+      firstChunk = res3.firstChunk;
+    } catch (err3) {
+      lastError = err3?.message || String(err3);
+      console.warn("[download] Attempt 3 failed:", lastError);
+    }
+  }
+
+  if (!firstChunk || !activeChild) {
+    let userNotice = lastError || "Stream extraction failed.";
+    if (userNotice.includes("Sign in to confirm you're not a bot")) {
+      userNotice += " [Tip: Add YOUTUBE_COOKIES_B64 to Vercel Environment Variables to authorize cloud IP requests]";
+    }
+
+    return new Response(JSON.stringify({ error: "Download stream extraction failed.", debugError: userNotice }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  if (!firstChunk) {
-    console.error("[download] 0 bytes produced by yt-dlp. stderr:", stderrTail);
-    return new Response(JSON.stringify({ error: "Download stream produced 0 bytes.", debugError: stderrTail || "Empty output stream" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  const childProcess = activeChild;
 
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(firstChunk);
 
-      child.stdout.on("data", (chunk) => {
+      childProcess.stdout.on("data", (chunk) => {
         try {
           controller.enqueue(chunk);
         } catch {}
       });
 
-      child.stdout.on("end", () => {
+      childProcess.stdout.on("end", () => {
         try {
           controller.close();
         } catch {}
       });
 
-      child.on("error", (err) => {
+      childProcess.on("error", (err) => {
         try {
           controller.error(err);
         } catch {}
       });
     },
     cancel() {
-      child.kill("SIGKILL");
+      childProcess.kill("SIGKILL");
     },
   });
 
