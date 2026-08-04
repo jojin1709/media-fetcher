@@ -129,7 +129,7 @@ export async function POST(req) {
 
     return NextResponse.json({
       title: info.title || "Untitled Media",
-      description: info.description ? info.description.slice(0, 200) + "..." : null,
+      description: info.description ? (info.description.length > 200 ? info.description.slice(0, 200) + "..." : info.description) : null,
       thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : null),
       durationSeconds: info.duration || null,
       uploader: info.uploader || info.channel || info.uploader_id || null,
@@ -169,7 +169,7 @@ export async function POST(req) {
             { res: "360p", height: 360, note: "Mobile Video Stream", spec: "bestvideo[height<=360]+bestaudio/best" },
           ];
 
-          const formats = fallbackResolutions.map((r, i) => ({
+          const formats = fallbackResolutions.map((r) => ({
             formatId: `fb_${r.height}`,
             downloadSpec: r.spec,
             ext: "mp4",
@@ -184,7 +184,7 @@ export async function POST(req) {
             hasAudio: true,
             isCombined: true,
             typeLabel: "Combined",
-            directUrl: cleanUrl,
+            directUrl: null,
             tbr: 0,
             abr: 0,
           }));
@@ -205,7 +205,7 @@ export async function POST(req) {
             hasAudio: true,
             isCombined: false,
             typeLabel: "Audio Only",
-            directUrl: cleanUrl,
+            directUrl: null,
             tbr: 0,
             abr: 320,
           });
