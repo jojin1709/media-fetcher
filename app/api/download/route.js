@@ -121,33 +121,32 @@ export async function GET(req) {
 
   // ── PATH 2: Page URL — use yt-dlp --get-url to resolve CDN URL ──
 
-  // Resolve format to a pre-muxed format where possible (avoid FFmpeg merges)
-  let formatArg = rawFormat;
+  // Format selection logic with guaranteed fallback
+  let formatArg = "best[ext=mp4]/best/18";
 
-  if (rawFormat.startsWith("fb_")) {
-    const h = rawFormat.replace("fb_", "");
-    formatArg = h === "audio"
-      ? "bestaudio[ext=m4a]/bestaudio/best"
-      : `best[height<=${h}][ext=mp4]/best[height<=${h}]/bestvideo[height<=${h}]+bestaudio/best`;
-
-  } else if (rawFormat === "best") {
-    formatArg = "best[ext=mp4]/best[vcodec!*=av01]/best";
-
-  } else if (rawFormat === "bestaudio") {
+  if (rawFormat === "bestaudio" || rawFormat === "fb_audio") {
     formatArg = "bestaudio[ext=m4a]/bestaudio/best";
 
-  } else if (/^\d+$/.test(rawFormat.trim())) {
-    // Single numeric format ID — assume pre-muxed
-    formatArg = rawFormat.trim();
+  } else if (rawFormat.startsWith("fb_")) {
+    const h = rawFormat.replace("fb_", "");
+    formatArg = `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best/18`;
 
-  } else if (rawFormat.includes("+")) {
-    // Merged DASH spec (e.g. "315+bestaudio/best") — rewrite to prefer pre-muxed
-    const heightMatch = rawFormat.match(/\[height<=(\d+)\]/);
+  } else if (rawFormat === "best") {
+    formatArg = "best[ext=mp4]/best/18";
+
+  } else if (/^\d+$/.test(rawFormat.trim())) {
+    // Specific numeric format ID (e.g., 18 or 22)
+    const num = rawFormat.trim();
+    formatArg = `${num}/best[ext=mp4]/best/18`;
+
+  } else {
+    // Complex format spec or DASH merge string
+    const heightMatch = rawFormat.match(/height<=?(\d+)/i);
     if (heightMatch) {
-      formatArg = `best[height<=${heightMatch[1]}][ext=mp4]/best[height<=${heightMatch[1]}][vcodec!*=av01]/best[height<=${heightMatch[1]}]`;
+      const h = heightMatch[1];
+      formatArg = `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best/18`;
     } else {
-      // Try to get best pre-muxed mp4
-      formatArg = "best[ext=mp4]/best[vcodec!*=av01]/best";
+      formatArg = "best[ext=mp4]/best/18";
     }
   }
 
@@ -160,26 +159,35 @@ export async function GET(req) {
   let cdnUrl = null;
   let resolveError = "Could not resolve download URL.";
 
+  // Primary Attempt: android,mweb,ios
   try {
     cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, "android,mweb,ios");
     console.log(`[download] Resolved CDN URL: ${cdnUrl.slice(0, 80)}...`);
-  } catch (err) {
-    console.warn("[download] Primary player_client failed, retrying with fallback client...", err.message);
+  } catch (err1) {
+    console.warn("[download] Primary client resolution failed:", err1.message, "— Retrying with fallback client (tv,mweb)...");
+    
+    // Fallback Attempt 1: tv,mweb with same formatArg
     try {
       cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, "tv,mweb");
       console.log(`[download] Resolved CDN URL via fallback client: ${cdnUrl.slice(0, 80)}...`);
     } catch (err2) {
-      let msg = err2?.message || String(err2);
-      if (msg.includes("Sign in") || msg.includes("bot") || msg.includes("confirm")) {
-        resolveError = "YouTube authentication required. Please try extracting again or try a different quality option.";
-      } else if (msg.includes("Private") || msg.includes("login")) {
-        resolveError = "This content is private or requires login.";
-      } else if (msg.includes("unavailable") || msg.includes("404")) {
-        resolveError = "Media not found or has been removed.";
-      } else {
-        resolveError = msg.slice(0, 300);
+      console.warn("[download] Fallback client resolution failed:", err2.message, "— Retrying with universal format (best)...");
+      
+      // Fallback Attempt 2: universal best format
+      try {
+        cdnUrl = await resolveCdnUrl(binPath, url, "best[ext=mp4]/best/18", cookiesPath, proxyUrl, "android,web");
+        console.log(`[download] Resolved CDN URL via universal fallback: ${cdnUrl.slice(0, 80)}...`);
+      } catch (err3) {
+        let msg = err3?.message || String(err3);
+        if (msg.includes("Private") || msg.includes("login")) {
+          resolveError = "This content is private or requires login.";
+        } else if (msg.includes("unavailable") || msg.includes("404")) {
+          resolveError = "Media not found or has been removed.";
+        } else {
+          resolveError = "Unable to fetch video stream from platform. Please try again or use the Stream button.";
+        }
+        console.error("[download] All resolution attempts failed:", msg);
       }
-      console.error("[download] yt-dlp --get-url failed on fallback:", resolveError);
     }
   } finally {
     cleanupCookiesFile(cookiesPath);
@@ -190,7 +198,6 @@ export async function GET(req) {
   }
 
   // ── PATH 2b: Proxy-stream from resolved CDN URL ──
-  // (server fetches from CDN and streams to user — works for small/medium files)
   try {
     const cdnRes = await fetch(cdnUrl, {
       headers: {
@@ -211,15 +218,12 @@ export async function GET(req) {
       return new Response(cdnRes.body, { headers });
     }
 
-    // CDN responded but not OK — fallback to redirect
     console.warn(`[download] CDN proxy returned ${cdnRes.status}, falling back to redirect`);
   } catch (e) {
     console.warn("[download] CDN proxy fetch error:", e.message, "— falling back to redirect");
   }
 
   // ── PATH 2c: Redirect to CDN URL as last resort ──
-  // Works for non-IP-restricted CDNs (Instagram, TikTok, SoundCloud, etc.)
-  // May not work for YouTube (IP-bound CDN URLs) but worth trying
   console.log("[download] Redirecting to CDN URL");
   return new Response(null, {
     status: 302,

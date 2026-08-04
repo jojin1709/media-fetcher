@@ -164,12 +164,12 @@ export async function POST(req) {
           const uploader = oembed.author_name || null;
 
           const fallbackResolutions = [
-            { res: "2160p (4K)", height: 2160, note: "4K Ultra HD Video", spec: "bestvideo[height<=2160]+bestaudio/best" },
-            { res: "1440p (2K)", height: 1440, note: "2K Quad HD Video", spec: "bestvideo[height<=1440]+bestaudio/best" },
-            { res: "1080p (FHD)", height: 1080, note: "Full HD Video", spec: "bestvideo[height<=1080]+bestaudio/best" },
-            { res: "720p (HD)", height: 720, note: "HD Video Stream", spec: "bestvideo[height<=720]+bestaudio/best" },
-            { res: "480p", height: 480, note: "SD Video Stream", spec: "bestvideo[height<=480]+bestaudio/best" },
-            { res: "360p", height: 360, note: "Mobile Video Stream", spec: "bestvideo[height<=360]+bestaudio/best" },
+            { res: "2160p (4K)", height: 2160, note: "4K Ultra HD Video", spec: "fb_2160" },
+            { res: "1440p (2K)", height: 1440, note: "2K Quad HD Video", spec: "fb_1440" },
+            { res: "1080p (FHD)", height: 1080, note: "Full HD Video", spec: "fb_1080" },
+            { res: "720p (HD)", height: 720, note: "HD Video Stream", spec: "fb_720" },
+            { res: "480p", height: 480, note: "SD Video Stream", spec: "fb_480" },
+            { res: "360p", height: 360, note: "Mobile Video Stream", spec: "fb_360" },
           ];
 
           const formats = fallbackResolutions.map((r) => ({
