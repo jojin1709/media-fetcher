@@ -256,14 +256,18 @@ export default function Page() {
     }
   }
 
-  function getDownloadHref(formatId, ext) {
+  function getDownloadHref(formatObj, overrideExt) {
     if (!result) return "#";
-    const filename = `${(result.title || "media").slice(0, 60)}.${ext || "mp4"}`;
-    const params = new URLSearchParams({
-      url: result.originalUrl,
-      format: formatId || "best",
-      filename,
-    });
+    const ext = overrideExt || formatObj?.ext || "mp4";
+    const filename = `${(result.title || "media").slice(0, 60)}.${ext}`;
+    // If we have a real CDN URL, pass it directly — download route skips yt-dlp entirely (much faster)
+    if (formatObj?.directUrl && isCdnUrl(formatObj.directUrl, result.originalUrl)) {
+      const params = new URLSearchParams({ url: formatObj.directUrl, format: "direct", filename });
+      return `/api/download?${params.toString()}`;
+    }
+    // Fallback: pass original URL with format spec
+    const spec = formatObj?.downloadSpec || formatObj?.formatId || "best";
+    const params = new URLSearchParams({ url: result.originalUrl, format: spec, filename });
     return `/api/download?${params.toString()}`;
   }
 
@@ -472,7 +476,7 @@ export default function Page() {
                           Stream
                         </a>
                       )}
-                      <a className="btn-quick primary" href={getDownloadHref("best", result.quickOptions.bestCombined.ext)}>
+                      <a className="btn-quick primary" href={getDownloadHref(result.quickOptions.bestCombined)}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                         Download
                       </a>
@@ -495,7 +499,7 @@ export default function Page() {
                           Stream
                         </a>
                       )}
-                      <a className="btn-quick primary audio-primary" href={getDownloadHref("bestaudio", result.quickOptions.bestAudio.ext)}>
+                      <a className="btn-quick primary audio-primary" href={getDownloadHref(result.quickOptions.bestAudio, "m4a")}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" width="13" height="13"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
                         Download Audio
                       </a>
@@ -553,9 +557,16 @@ export default function Page() {
                         Stream
                       </a>
                     )}
-                    <a className="btn-ghost primary" href={getDownloadHref(f.downloadSpec || f.formatId, f.ext)} title="Download via server proxy">
-                      Download
-                    </a>
+                    {/* Only show Download for combined/audio formats — video-only DASH can't be merged on serverless */}
+                    {f.hasAudio ? (
+                      <a className="btn-ghost primary" href={getDownloadHref(f)} title="Download file">
+                        Download
+                      </a>
+                    ) : (
+                      <span className="btn-ghost disabled" title="Video-only stream — use Stream button or select a combined format">
+                        Video Only
+                      </span>
+                    )}
                   </div>
                 </div>
               ))

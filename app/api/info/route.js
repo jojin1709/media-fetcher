@@ -90,8 +90,11 @@ export async function POST(req) {
         if (hasVideo && !hasAudio) typeLabel = "Video Only";
         if (!hasVideo && hasAudio) typeLabel = "Audio Only";
 
-        // For video-only DASH formats, specifier merges with best audio on download
-        const downloadSpec = (hasVideo && !hasAudio) ? `${f.format_id}+bestaudio/best` : f.format_id;
+        // For video-only DASH formats, prefer a pre-muxed format at same quality
+        // (avoids FFmpeg merge which times out on serverless)
+        const downloadSpec = (hasVideo && !hasAudio && f.height)
+          ? `best[height<=${f.height}][ext=mp4]/best[height<=${f.height}][vcodec!*=av01]/best[height<=${f.height}]`
+          : f.format_id;
 
         return {
           formatId: f.format_id,
