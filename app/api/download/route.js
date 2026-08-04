@@ -37,7 +37,7 @@ function jsonError(msg, status = 500) {
   });
 }
 
-async function resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl) {
+async function resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, clientConfig = "android,mweb,ios") {
   const args = [
     url,
     "-f", formatArg,
@@ -46,6 +46,7 @@ async function resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl) {
     "--no-check-certificates",
     "--geo-bypass",
     "--no-playlist",
+    "--extractor-args", `youtube:player_client=${clientConfig}`,
     "--add-header", "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "--add-header", "referer:https://www.google.com/",
   ];
@@ -160,20 +161,26 @@ export async function GET(req) {
   let resolveError = "Could not resolve download URL.";
 
   try {
-    cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl);
+    cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, "android,mweb,ios");
     console.log(`[download] Resolved CDN URL: ${cdnUrl.slice(0, 80)}...`);
   } catch (err) {
-    let msg = err?.message || String(err);
-    if (msg.includes("Sign in") || msg.includes("bot") || msg.includes("confirm")) {
-      resolveError = "YouTube requires authentication. Please configure YOUTUBE_COOKIES_B64 in your Vercel environment variables.";
-    } else if (msg.includes("Private") || msg.includes("login")) {
-      resolveError = "This content is private or requires login.";
-    } else if (msg.includes("unavailable") || msg.includes("404")) {
-      resolveError = "Media not found or has been removed.";
-    } else {
-      resolveError = msg.slice(0, 300);
+    console.warn("[download] Primary player_client failed, retrying with fallback client...", err.message);
+    try {
+      cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, "tv,mweb");
+      console.log(`[download] Resolved CDN URL via fallback client: ${cdnUrl.slice(0, 80)}...`);
+    } catch (err2) {
+      let msg = err2?.message || String(err2);
+      if (msg.includes("Sign in") || msg.includes("bot") || msg.includes("confirm")) {
+        resolveError = "YouTube authentication required. Please try extracting again or try a different quality option.";
+      } else if (msg.includes("Private") || msg.includes("login")) {
+        resolveError = "This content is private or requires login.";
+      } else if (msg.includes("unavailable") || msg.includes("404")) {
+        resolveError = "Media not found or has been removed.";
+      } else {
+        resolveError = msg.slice(0, 300);
+      }
+      console.error("[download] yt-dlp --get-url failed on fallback:", resolveError);
     }
-    console.error("[download] yt-dlp --get-url failed:", resolveError);
   } finally {
     cleanupCookiesFile(cookiesPath);
   }
