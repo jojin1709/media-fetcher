@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import ytdl from "@distube/ytdl-core";
 import { runYtDlp } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
@@ -54,7 +55,7 @@ function formatResolutionString(f) {
     if (f.height >= 720) return `${f.height}p (HD)`;
     return `${f.height}p`;
   }
-  return f.resolution || "Video";
+  return f.resolution || f.qualityLabel || "Video";
 }
 
 export async function POST(req) {
@@ -70,13 +71,94 @@ export async function POST(req) {
   }
 
   const cleanUrl = url.trim();
+  const isYouTube = cleanUrl.includes("youtube.com") || cleanUrl.includes("youtu.be");
 
+  // ── STRATEGY 1: For YouTube, try fast pure JS extraction with @distube/ytdl-core first ──
+  if (isYouTube) {
+    try {
+      console.log("[api/info] Extracting YouTube metadata via @distube/ytdl-core...");
+      const info = await ytdl.getInfo(cleanUrl);
+      if (info && info.videoDetails && info.formats && info.formats.length) {
+        const details = info.videoDetails;
+        const platform = detectPlatform(cleanUrl, "youtube");
+        const title = details.title || "YouTube Video";
+        const thumbnail = details.thumbnails?.[details.thumbnails.length - 1]?.url || null;
+        const uploader = details.author?.name || null;
+        const durationSeconds = parseInt(details.lengthSeconds, 10) || null;
+        const viewCount = parseInt(details.viewCount, 10) || null;
+
+        const processedFormats = info.formats
+          .filter((f) => f.url && (f.hasVideo || f.hasAudio))
+          .map((f) => {
+            const hasVideo = Boolean(f.hasVideo);
+            const hasAudio = Boolean(f.hasAudio);
+            const isCombined = hasVideo && hasAudio;
+            const resolution = formatResolutionString(f);
+            const filesize = f.contentLength ? parseInt(f.contentLength, 10) : null;
+
+            let typeLabel = "Combined";
+            if (hasVideo && !hasAudio) typeLabel = "Video Only";
+            if (!hasVideo && hasAudio) typeLabel = "Audio Only";
+
+            return {
+              formatId: String(f.itag || f.format_id),
+              downloadSpec: String(f.itag || f.format_id),
+              ext: f.container || (hasVideo ? "mp4" : "mp3"),
+              resolution,
+              height: f.height || 0,
+              fps: f.fps || null,
+              vcodec: f.videoCodec || (hasVideo ? "h264" : "none"),
+              acodec: f.audioCodec || (hasAudio ? "aac" : "none"),
+              note: f.qualityLabel || (hasAudio ? "Audio Stream" : ""),
+              filesize,
+              hasVideo,
+              hasAudio,
+              isCombined,
+              typeLabel,
+              directUrl: f.url,
+              tbr: f.bitrate || 0,
+              abr: f.audioBitrate || 0,
+            };
+          })
+          .sort((a, b) => (b.height || b.tbr || 0) - (a.height || a.tbr || 0));
+
+        const combinedFormats = processedFormats.filter((f) => f.isCombined);
+        const videoFormats = processedFormats.filter((f) => f.hasVideo);
+        const audioFormats = processedFormats.filter((f) => f.hasAudio && !f.hasVideo);
+
+        const bestCombined = combinedFormats[0] || videoFormats[0] || processedFormats[0];
+        const bestAudio = audioFormats[0] || processedFormats.find((f) => f.hasAudio) || null;
+        const bestVideo = videoFormats[0] || null;
+
+        return NextResponse.json({
+          title,
+          description: details.description ? (details.description.length > 200 ? details.description.slice(0, 200) + "..." : details.description) : null,
+          thumbnail,
+          durationSeconds,
+          uploader,
+          viewCount,
+          likeCount: null,
+          platform,
+          originalUrl: cleanUrl,
+          quickOptions: {
+            bestCombined,
+            bestVideo,
+            bestAudio,
+          },
+          formats: processedFormats,
+        });
+      }
+    } catch (ytdlErr) {
+      console.warn("[api/info] ytdl-core extraction warning:", ytdlErr.message, "— falling back to yt-dlp binary");
+    }
+  }
+
+  // ── STRATEGY 2: Use yt-dlp binary for all platforms (Instagram, TikTok, X, SoundCloud, Pinterest, Facebook, YouTube fallback) ──
   try {
     const info = await runYtDlp(cleanUrl);
 
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
-    
-    // Parse all formats
+
     const processedFormats = rawFormats
       .filter((f) => f.url && (f.vcodec !== "none" || f.acodec !== "none") && f.ext !== "mhtml")
       .map((f) => {
@@ -85,13 +167,11 @@ export async function POST(req) {
         const isCombined = hasVideo && hasAudio;
         const resolution = formatResolutionString(f);
         const filesize = f.filesize || f.filesize_approx || null;
-        
+
         let typeLabel = "Combined";
         if (hasVideo && !hasAudio) typeLabel = "Video Only";
         if (!hasVideo && hasAudio) typeLabel = "Audio Only";
 
-        // For video-only DASH formats, prefer a pre-muxed format at same quality
-        // (avoids FFmpeg merge which times out on serverless)
         const downloadSpec = (hasVideo && !hasAudio && f.height)
           ? `best[height<=${f.height}][ext=mp4]/best[height<=${f.height}][vcodec!*=av01]/best[height<=${f.height}]`
           : f.format_id;
@@ -118,10 +198,8 @@ export async function POST(req) {
       })
       .sort((a, b) => (b.height || b.tbr || b.filesize || 0) - (a.height || a.tbr || a.filesize || 0));
 
-    // Platform identification
     const platform = detectPlatform(cleanUrl, info.extractor_key || info.extractor);
 
-    // Identify Quick Downloads
     const combinedFormats = processedFormats.filter((f) => f.isCombined);
     const videoFormats = processedFormats.filter((f) => f.hasVideo);
     const audioFormats = processedFormats.filter((f) => f.hasAudio && !f.hasVideo);
@@ -150,8 +228,7 @@ export async function POST(req) {
   } catch (err) {
     const rawError = err?.stderr?.toString?.() || err?.message || String(err);
 
-    // Fallback strategy for YouTube when datacenter IPs are blocked without cookies
-    const isYouTube = cleanUrl.includes("youtube.com") || cleanUrl.includes("youtu.be");
+    // ── STRATEGY 3: oEmbed Fallback for YouTube ──
     if (isYouTube) {
       try {
         console.log("[api/info] yt-dlp failed, falling back to YouTube oEmbed metadata extraction...");
@@ -164,16 +241,12 @@ export async function POST(req) {
           const uploader = oembed.author_name || null;
 
           const fallbackResolutions = [
-            { res: "2160p (4K)", height: 2160, note: "4K Ultra HD Video", spec: "fb_2160" },
-            { res: "1440p (2K)", height: 1440, note: "2K Quad HD Video", spec: "fb_1440" },
-            { res: "1080p (FHD)", height: 1080, note: "Full HD Video", spec: "fb_1080" },
-            { res: "720p (HD)", height: 720, note: "HD Video Stream", spec: "fb_720" },
-            { res: "480p", height: 480, note: "SD Video Stream", spec: "fb_480" },
-            { res: "360p", height: 360, note: "Mobile Video Stream", spec: "fb_360" },
+            { res: "720p (HD)", height: 720, note: "HD Video Stream", spec: "best" },
+            { res: "360p", height: 360, note: "Mobile Video Stream", spec: "18" },
           ];
 
           const formats = fallbackResolutions.map((r) => ({
-            formatId: `fb_${r.height}`,
+            formatId: r.spec,
             downloadSpec: r.spec,
             ext: "mp4",
             resolution: r.res,
@@ -192,10 +265,9 @@ export async function POST(req) {
             abr: 0,
           }));
 
-          // Add Audio format
           formats.push({
-            formatId: "fb_audio",
-            downloadSpec: "bestaudio/best",
+            formatId: "bestaudio",
+            downloadSpec: "bestaudio",
             ext: "mp3",
             resolution: "Audio (320kbps)",
             height: 0,
@@ -224,8 +296,8 @@ export async function POST(req) {
             platform,
             originalUrl: cleanUrl,
             quickOptions: {
-              bestCombined: formats[2] || formats[0], // 1080p
-              bestVideo: formats[2] || formats[0],
+              bestCombined: formats[0],
+              bestVideo: formats[0],
               bestAudio: formats[formats.length - 1],
             },
             formats,
@@ -237,7 +309,7 @@ export async function POST(req) {
     }
 
     let message = "Could not extract media from that URL. Please verify the link and try again.";
-    
+
     if (rawError.includes("Private video") || rawError.includes("login")) {
       message = "This video or post appears to be private or requires login.";
     } else if (rawError.includes("Incomplete YouTube ID") || rawError.includes("Not a valid URL")) {

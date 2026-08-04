@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import ytdl from "@distube/ytdl-core";
 import { getYtDlpPath, writeCookiesFile, cleanupCookiesFile, getProxyUrl } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
@@ -14,7 +15,7 @@ function looksLikeCdnUrl(url) {
       "cdninstagram.com",
       "fbcdn.net",
       "tiktokcdn.com",
-      "sndcdn.com",       // SoundCloud
+      "sndcdn.com",
       "akamaized.net",
       "twimg.com",
       "pinimg.com",
@@ -37,7 +38,32 @@ function jsonError(msg, status = 500) {
   });
 }
 
-async function resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, clientConfig = "android,mweb,ios") {
+async function resolveYouTubeCdnUrl(url, formatReq) {
+  try {
+    console.log("[download] Attempting fast JS stream resolution with @distube/ytdl-core...");
+    const info = await ytdl.getInfo(url);
+    if (!info || !info.formats || !info.formats.length) return null;
+
+    let targetFormat = null;
+    if (formatReq === "bestaudio" || formatReq === "fb_audio") {
+      targetFormat = ytdl.chooseFormat(info.formats, { quality: "highestaudio" });
+    } else {
+      targetFormat = ytdl.chooseFormat(info.formats, { filter: "audioandvideo" })
+        || info.formats.find((f) => f.hasVideo && f.hasAudio)
+        || info.formats[0];
+    }
+
+    if (targetFormat?.url) {
+      console.log("[download] @distube/ytdl-core successfully resolved stream URL!");
+      return targetFormat.url;
+    }
+  } catch (e) {
+    console.warn("[download] ytdl-core stream resolution warning:", e.message);
+  }
+  return null;
+}
+
+async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, clientConfig = "android,mweb,ios") {
   const args = [
     url,
     "-f", formatArg,
@@ -119,85 +145,90 @@ export async function GET(req) {
     return jsonError("Could not fetch from source CDN. The stream URL may have expired. Please extract again.", 502);
   }
 
-  // ── PATH 2: Page URL — use yt-dlp --get-url to resolve CDN URL ──
+  // ── PATH 2: YouTube URL — Try fast pure JS resolution with ytdl-core first ──
+  const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
+  let cdnUrl = null;
 
-  // Format selection logic with guaranteed fallback
-  let formatArg = "best[ext=mp4]/best/18";
-
-  if (rawFormat === "bestaudio" || rawFormat === "fb_audio") {
-    formatArg = "bestaudio[ext=m4a]/bestaudio/best";
-
-  } else if (rawFormat.startsWith("fb_")) {
-    const h = rawFormat.replace("fb_", "");
-    formatArg = `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best/18`;
-
-  } else if (rawFormat === "best") {
-    formatArg = "best[ext=mp4]/best/18";
-
-  } else if (/^\d+$/.test(rawFormat.trim())) {
-    // Specific numeric format ID (e.g., 18 or 22)
-    const num = rawFormat.trim();
-    formatArg = `${num}/best[ext=mp4]/best/18`;
-
-  } else {
-    // Complex format spec or DASH merge string
-    const heightMatch = rawFormat.match(/height<=?(\d+)/i);
-    if (heightMatch) {
-      const h = heightMatch[1];
-      formatArg = `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best/18`;
-    } else {
-      formatArg = "best[ext=mp4]/best/18";
-    }
+  if (isYouTube) {
+    cdnUrl = await resolveYouTubeCdnUrl(url, rawFormat);
   }
 
-  console.log(`[download] Resolving CDN URL via yt-dlp | format: ${formatArg}`);
+  // ── PATH 3: If not YouTube or ytdl-core failed — use yt-dlp binary ──
+  if (!cdnUrl) {
+    let formatArg = "best[ext=mp4]/best/18";
 
-  const binPath = await getYtDlpPath();
-  const cookiesPath = writeCookiesFile();
-  const proxyUrl = getProxyUrl();
+    if (rawFormat === "bestaudio" || rawFormat === "fb_audio") {
+      formatArg = "bestaudio[ext=m4a]/bestaudio/best";
 
-  let cdnUrl = null;
-  let resolveError = "Could not resolve download URL.";
+    } else if (rawFormat.startsWith("fb_")) {
+      const h = rawFormat.replace("fb_", "");
+      formatArg = `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best/18`;
 
-  // Primary Attempt: android,mweb,ios
-  try {
-    cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, "android,mweb,ios");
-    console.log(`[download] Resolved CDN URL: ${cdnUrl.slice(0, 80)}...`);
-  } catch (err1) {
-    console.warn("[download] Primary client resolution failed:", err1.message, "— Retrying with fallback client (tv,mweb)...");
-    
-    // Fallback Attempt 1: tv,mweb with same formatArg
-    try {
-      cdnUrl = await resolveCdnUrl(binPath, url, formatArg, cookiesPath, proxyUrl, "tv,mweb");
-      console.log(`[download] Resolved CDN URL via fallback client: ${cdnUrl.slice(0, 80)}...`);
-    } catch (err2) {
-      console.warn("[download] Fallback client resolution failed:", err2.message, "— Retrying with universal format (best)...");
-      
-      // Fallback Attempt 2: universal best format
-      try {
-        cdnUrl = await resolveCdnUrl(binPath, url, "best[ext=mp4]/best/18", cookiesPath, proxyUrl, "android,web");
-        console.log(`[download] Resolved CDN URL via universal fallback: ${cdnUrl.slice(0, 80)}...`);
-      } catch (err3) {
-        let msg = err3?.message || String(err3);
-        if (msg.includes("Private") || msg.includes("login")) {
-          resolveError = "This content is private or requires login.";
-        } else if (msg.includes("unavailable") || msg.includes("404")) {
-          resolveError = "Media not found or has been removed.";
-        } else {
-          resolveError = "Unable to fetch video stream from platform. Please try again or use the Stream button.";
-        }
-        console.error("[download] All resolution attempts failed:", msg);
+    } else if (rawFormat === "best") {
+      formatArg = "best[ext=mp4]/best/18";
+
+    } else if (/^\d+$/.test(rawFormat.trim())) {
+      const num = rawFormat.trim();
+      formatArg = `${num}/best[ext=mp4]/best/18`;
+
+    } else {
+      const heightMatch = rawFormat.match(/height<=?(\d+)/i);
+      if (heightMatch) {
+        const h = heightMatch[1];
+        formatArg = `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best/18`;
+      } else {
+        formatArg = "best[ext=mp4]/best/18";
       }
     }
-  } finally {
-    cleanupCookiesFile(cookiesPath);
+
+    console.log(`[download] Resolving CDN URL via yt-dlp binary | format: ${formatArg}`);
+
+    let resolveError = "Could not resolve download URL.";
+    let binPath = null;
+    let cookiesPath = null;
+    let proxyUrl = null;
+
+    try {
+      binPath = await getYtDlpPath();
+      cookiesPath = writeCookiesFile();
+      proxyUrl = getProxyUrl();
+
+      try {
+        cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, "android,mweb,ios");
+      } catch (err1) {
+        console.warn("[download] Primary client resolution failed, retrying fallback client...", err1.message);
+        try {
+          cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, "tv,mweb");
+        } catch (err2) {
+          console.warn("[download] Fallback client resolution failed, retrying universal format...", err2.message);
+          try {
+            cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, "best[ext=mp4]/best/18", cookiesPath, proxyUrl, "android,web");
+          } catch (err3) {
+            let msg = err3?.message || String(err3);
+            if (msg.includes("Private") || msg.includes("login")) {
+              resolveError = "This content is private or requires login.";
+            } else if (msg.includes("unavailable") || msg.includes("404")) {
+              resolveError = "Media not found or has been removed.";
+            } else {
+              resolveError = "Unable to fetch video stream from platform. Please try again or use the Stream button.";
+            }
+            console.error("[download] All resolution attempts failed:", msg);
+          }
+        }
+      }
+    } catch (binErr) {
+      console.error("[download] Error setting up yt-dlp binary:", binErr.message);
+      resolveError = "Server process initialization error. Please try the Stream button.";
+    } finally {
+      cleanupCookiesFile(cookiesPath);
+    }
   }
 
   if (!cdnUrl) {
-    return jsonError(resolveError, 500);
+    return jsonError("Unable to fetch video stream from platform. Please try again or use the Stream button.", 500);
   }
 
-  // ── PATH 2b: Proxy-stream from resolved CDN URL ──
+  // ── PATH 4: Proxy-stream from resolved CDN URL ──
   try {
     const cdnRes = await fetch(cdnUrl, {
       headers: {
@@ -223,8 +254,8 @@ export async function GET(req) {
     console.warn("[download] CDN proxy fetch error:", e.message, "— falling back to redirect");
   }
 
-  // ── PATH 2c: Redirect to CDN URL as last resort ──
-  console.log("[download] Redirecting to CDN URL");
+  // ── PATH 5: Redirect to CDN URL as last resort ──
+  console.log("[download] Redirecting to CDN URL:", cdnUrl.slice(0, 80));
   return new Response(null, {
     status: 302,
     headers: {
