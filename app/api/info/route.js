@@ -338,6 +338,9 @@ export async function POST(req) {
       else if (rawError) message = rawError.slice(0, 300);
     }
 
-    return NextResponse.json({ error: message, debugError: rawError }, { status: 422 });
+    const activeEnvs = `[Env Diagnostics: YT_COOKIES=${Boolean(process.env.YOUTUBE_COOKIES)}, YT_COOKIES_B64=${Boolean(process.env.YOUTUBE_COOKIES_B64)}, IG_COOKIES=${Boolean(process.env.INSTAGRAM_COOKIES)}, IG_COOKIES_B64=${Boolean(process.env.INSTAGRAM_COOKIES_B64)}]`;
+    const finalDebugError = `${rawError}\n${activeEnvs}`;
+
+    return NextResponse.json({ error: message, debugError: finalDebugError }, { status: 422 });
   }
 }
