@@ -262,7 +262,19 @@ export async function GET(req) {
       }
       const cdnRes = await fetch(cdnUrl, { headers });
 
-    if (cdnRes.ok && cdnRes.body) {
+    if (!cdnRes.ok) {
+      const errText = await cdnRes.text();
+      console.warn(`[download] CDN proxy returned ${cdnRes.status}:`, errText.slice(0, 200));
+      return new Response(JSON.stringify({
+        error: `Proxy download failed with status ${cdnRes.status}`,
+        details: errText.slice(0, 500)
+      }), {
+        status: cdnRes.status,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    if (cdnRes.body) {
       const headers = {
         "Content-Type": cdnRes.headers.get("content-type") || "application/octet-stream",
         "Content-Disposition": contentDisposition,
@@ -273,8 +285,6 @@ export async function GET(req) {
       console.log(`[download] Streaming from CDN proxy (${len ? Math.round(len / 1024 / 1024) + " MB" : "unknown size"})`);
       return new Response(cdnRes.body, { headers });
     }
-
-    console.warn(`[download] CDN proxy returned ${cdnRes.status}, falling back to redirect`);
   } catch (e) {
     console.warn("[download] CDN proxy fetch error:", e.message, "— falling back to redirect");
   }
