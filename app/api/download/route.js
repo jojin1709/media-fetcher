@@ -155,6 +155,7 @@ export async function GET(req) {
   // ── PATH 2: YouTube URL — Try fast pure JS resolution with ytdl-core first ──
   const isYouTube = url.includes("youtube.com") || url.includes("youtu.be");
   let cdnUrl = null;
+  let resolveError = "Could not resolve download URL.";
 
   if (isYouTube) {
     cdnUrl = await resolveYouTubeCdnUrl(url, rawFormat);
@@ -190,7 +191,7 @@ export async function GET(req) {
 
     console.log(`[download] Resolving CDN URL via yt-dlp binary | format: ${formatArg}`);
 
-    let resolveError = "Could not resolve download URL.";
+    resolveError = "Could not resolve download URL.";
     let binPath = null;
     let cookiesPath = null;
     let proxyUrl = null;
