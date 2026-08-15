@@ -168,7 +168,15 @@ export async function POST(req) {
     const rawFormats = Array.isArray(info.formats) ? info.formats : [];
 
     const processedFormats = rawFormats
-      .filter((f) => f.url && (f.vcodec !== "none" || f.acodec !== "none") && f.ext !== "mhtml")
+      .filter((f) => {
+        if (!f.url || f.ext === "mhtml") return false;
+        const isHls = Boolean(
+          (f.protocol && f.protocol.includes("m3u8")) ||
+          (f.url.includes(".m3u8") || f.url.includes("/hls_playlist/") || f.url.includes("/manifest/"))
+        );
+        if (isHls) return false;
+        return (f.vcodec !== "none" || f.acodec !== "none");
+      })
       .map((f) => {
         const hasVideo = Boolean(f.vcodec && f.vcodec !== "none");
         const hasAudio = Boolean(f.acodec && f.acodec !== "none");
