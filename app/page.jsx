@@ -557,16 +557,14 @@ export default function Page() {
                         Stream
                       </a>
                     )}
-                    {/* Only show Download for combined/audio formats — video-only DASH can't be merged on serverless */}
-                    {f.hasAudio ? (
-                      <a className="btn-ghost primary" href={getDownloadHref(f)} title="Download file">
-                        Download
-                      </a>
-                    ) : (
-                      <span className="btn-ghost disabled" title="Video-only stream — use Stream button or select a combined format">
-                        Video Only
-                      </span>
-                    )}
+                    {/* Allow downloading all formats, indicating if a video format lacks audio */}
+                    <a 
+                      className={`btn-ghost primary ${!f.hasAudio && f.hasVideo ? "warning-btn" : ""}`} 
+                      href={getDownloadHref(f)} 
+                      title={f.hasAudio ? "Download file" : "Download video stream (contains no audio)"}
+                    >
+                      {f.isCombined ? "Download" : f.hasVideo ? "Download (No Audio)" : "Download"}
+                    </a>
                   </div>
                 </div>
               ))

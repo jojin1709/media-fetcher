@@ -648,6 +648,9 @@ svg { display: block; flex-shrink: 0; }
   border: none; color: #fff; font-weight: 700;
 }
 .btn-ghost.primary:hover { filter: brightness(1.08); }
+.btn-ghost.primary.warning-btn {
+  background: linear-gradient(135deg, var(--accent-amber) 0%, #d97706 100%);
+}
 .btn-ghost.disabled {
   background: transparent;
   border: 1px solid var(--border);
