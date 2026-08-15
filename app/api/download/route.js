@@ -82,21 +82,25 @@ async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, prox
   if (proxyUrl) args.push("--proxy", proxyUrl);
 
   return new Promise((resolve, reject) => {
-    const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => (stdout += d.toString()));
-    child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      const lines = stdout.trim().split("\n").filter((l) => l.startsWith("http"));
-      if (code === 0 && lines.length > 0) {
-        resolve(lines[0].trim());
-      } else {
-        const errLine = stderr.split("\n").filter((l) => l.includes("ERROR:")).pop();
-        reject(new Error(errLine?.replace(/^ERROR:\s*/, "") || stderr.slice(0, 400) || `yt-dlp exited ${code}`));
-      }
-    });
+    try {
+      const child = spawn(binPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d.toString()));
+      child.stderr.on("data", (d) => (stderr += d.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => {
+        const lines = stdout.trim().split("\n").filter((l) => l.startsWith("http"));
+        if (code === 0 && lines.length > 0) {
+          resolve(lines[0].trim());
+        } else {
+          const errLine = stderr.split("\n").filter((l) => l.includes("ERROR:")).pop();
+          reject(new Error(errLine?.replace(/^ERROR:\s*/, "") || stderr.slice(0, 400) || `yt-dlp exited ${code}`));
+        }
+      });
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
