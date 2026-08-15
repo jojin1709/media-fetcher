@@ -10,6 +10,9 @@ function looksLikeCdnUrl(url) {
   if (!url) return false;
   try {
     const u = new URL(url);
+    if (u.pathname.includes("/hls_playlist/") || u.pathname.endsWith(".m3u8") || u.pathname.includes("/manifest/")) {
+      return false;
+    }
     const cdnHosts = [
       "googlevideo.com",
       "cdninstagram.com",

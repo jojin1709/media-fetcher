@@ -119,7 +119,7 @@ export async function POST(req) {
               hasAudio,
               isCombined,
               typeLabel,
-              directUrl: f.url,
+              directUrl: (f.url && (f.url.includes(".m3u8") || f.url.includes("/hls_playlist/") || f.url.includes("/manifest/"))) ? null : f.url,
               tbr: f.bitrate || 0,
               abr: f.audioBitrate || 0,
             };
@@ -199,7 +199,7 @@ export async function POST(req) {
           hasAudio,
           isCombined,
           typeLabel,
-          directUrl: f.url,
+          directUrl: ((f.protocol && f.protocol.includes("m3u8")) || (f.url && (f.url.includes(".m3u8") || f.url.includes("/hls_playlist/") || f.url.includes("/manifest/")))) ? null : f.url,
           tbr: f.tbr || 0,
           abr: f.abr || 0,
         };
