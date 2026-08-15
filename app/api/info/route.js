@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import ytdl from "@distube/ytdl-core";
-import { runYtDlp } from "../../../lib/get-yt-dlp";
+import { runYtDlp, getCookieAgent } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -80,7 +80,8 @@ export async function POST(req) {
   if (isYouTube) {
     try {
       console.log("[api/info] Extracting YouTube metadata via @distube/ytdl-core...");
-      const info = await ytdl.getInfo(cleanUrl);
+      const agent = getCookieAgent();
+      const info = await ytdl.getInfo(cleanUrl, agent ? { agent } : undefined);
       if (info && info.videoDetails && info.formats && info.formats.length) {
         const details = info.videoDetails;
         const platform = detectPlatform(cleanUrl, "youtube");

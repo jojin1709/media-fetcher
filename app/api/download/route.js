@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import ytdl from "@distube/ytdl-core";
-import { getYtDlpPath, writeCookiesFile, cleanupCookiesFile, getProxyUrl } from "../../../lib/get-yt-dlp";
+import { getYtDlpPath, writeCookiesFile, cleanupCookiesFile, getProxyUrl, getCookieAgent } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -41,7 +41,8 @@ function jsonError(msg, status = 500) {
 async function resolveYouTubeCdnUrl(url, formatReq) {
   try {
     console.log("[download] Attempting fast JS stream resolution with @distube/ytdl-core...");
-    const info = await ytdl.getInfo(url);
+    const agent = getCookieAgent();
+    const info = await ytdl.getInfo(url, agent ? { agent } : undefined);
     if (!info || !info.formats || !info.formats.length) return null;
 
     let targetFormat = null;
