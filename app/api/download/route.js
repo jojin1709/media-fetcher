@@ -105,10 +105,11 @@ async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, prox
 }
 
 export async function GET(req) {
-  const { searchParams } = new URL(req.url);
-  const url = searchParams.get("url");
-  const rawFormat = searchParams.get("format") || "best";
-  const rawFilename = searchParams.get("filename") || "download.mp4";
+  try {
+    const { searchParams } = new URL(req.url);
+    const url = searchParams.get("url");
+    const rawFormat = searchParams.get("format") || "best";
+    const rawFilename = searchParams.get("filename") || "download.mp4";
 
   if (!url) {
     return jsonError("Missing url parameter", 400);
@@ -275,4 +276,15 @@ export async function GET(req) {
       "Cache-Control": "no-store",
     },
   });
+  } catch (outerError) {
+    console.error("[download] Outer GET crash:", outerError);
+    return new Response(JSON.stringify({
+      error: "Internal server crash in download API",
+      message: outerError.message,
+      stack: outerError.stack
+    }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 }
