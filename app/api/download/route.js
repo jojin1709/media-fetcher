@@ -63,7 +63,7 @@ async function resolveYouTubeCdnUrl(url, formatReq) {
   return null;
 }
 
-async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, clientConfig = "android,mweb,ios") {
+async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, clientConfig = null) {
   const args = [
     url,
     "-f", formatArg,
@@ -72,10 +72,12 @@ async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, prox
     "--no-check-certificates",
     "--geo-bypass",
     "--no-playlist",
-    "--extractor-args", `youtube:player_client=${clientConfig}`,
     "--add-header", "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "--add-header", "referer:https://www.google.com/",
   ];
+  if (clientConfig) {
+    args.push("--extractor-args", `youtube:player_client=${clientConfig}`);
+  }
   if (cookiesPath) args.push("--cookies", cookiesPath);
   if (proxyUrl) args.push("--proxy", proxyUrl);
 
@@ -194,15 +196,15 @@ export async function GET(req) {
       proxyUrl = getProxyUrl();
 
       try {
-        cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, "android,mweb,ios");
+        cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, null);
       } catch (err1) {
-        console.warn("[download] Primary client resolution failed, retrying fallback client...", err1.message);
+        console.warn("[download] Default resolution failed, retrying fallback client...", err1.message);
         try {
-          cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, "tv,mweb");
+          cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, proxyUrl, "android,mweb,ios");
         } catch (err2) {
           console.warn("[download] Fallback client resolution failed, retrying universal format...", err2.message);
           try {
-            cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, "best[ext=mp4]/best/18", cookiesPath, proxyUrl, "android,web");
+            cdnUrl = await resolveCdnUrlWithYtDlp(binPath, url, "best[ext=mp4]/best/18", cookiesPath, proxyUrl, null);
           } catch (err3) {
             let msg = err3?.message || String(err3);
             if (msg.includes("Private") || msg.includes("login")) {

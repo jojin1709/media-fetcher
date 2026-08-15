@@ -44,9 +44,12 @@ function detectPlatform(url, extractorKey) {
 }
 
 function formatResolutionString(f) {
-  if (!f.vcodec || f.vcodec === "none") {
-    const abr = f.abr ? `${Math.round(f.abr)}kbps` : "";
-    return abr ? `Audio (${abr})` : "Audio Track";
+  const vcodec = f.vcodec || f.videoCodec;
+  const hasVideo = f.hasVideo !== undefined ? f.hasVideo : (vcodec && vcodec !== "none");
+  if (!hasVideo) {
+    const abr = f.abr || f.audioBitrate;
+    const abrStr = abr ? `${Math.round(abr)}kbps` : "";
+    return abrStr ? `Audio (${abrStr})` : "Audio Track";
   }
   if (f.height) {
     if (f.height >= 2160) return `${f.height}p (4K)`;
@@ -121,6 +124,10 @@ export async function POST(req) {
             };
           })
           .sort((a, b) => (b.height || b.tbr || 0) - (a.height || a.tbr || 0));
+
+        if (processedFormats.length < 5) {
+          throw new Error(`Only found ${processedFormats.length} formats. Falling back to yt-dlp.`);
+        }
 
         const combinedFormats = processedFormats.filter((f) => f.isCombined);
         const videoFormats = processedFormats.filter((f) => f.hasVideo);
