@@ -212,7 +212,7 @@ export async function GET(req) {
             } else if (msg.includes("unavailable") || msg.includes("404")) {
               resolveError = "Media not found or has been removed.";
             } else {
-              resolveError = "Unable to fetch video stream from platform. Please try again or use the Stream button.";
+              resolveError = `Unable to fetch video stream: ${msg}`;
             }
             console.error("[download] All resolution attempts failed:", msg);
           }
@@ -220,14 +220,20 @@ export async function GET(req) {
       }
     } catch (binErr) {
       console.error("[download] Error setting up yt-dlp binary:", binErr.message);
-      resolveError = "Server process initialization error. Please try the Stream button.";
+      resolveError = `Server process setup error: ${binErr.message}`;
     } finally {
       cleanupCookiesFile(cookiesPath);
     }
   }
 
   if (!cdnUrl) {
-    return jsonError("Unable to fetch video stream from platform. Please try again or use the Stream button.", 500);
+    return new Response(JSON.stringify({
+      error: "Unable to fetch video stream from platform. Please try again or use the Stream button.",
+      details: resolveError
+    }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   // ── PATH 4: Proxy-stream from resolved CDN URL ──
