@@ -73,6 +73,7 @@ async function resolveCdnUrlWithYtDlp(binPath, url, formatArg, cookiesPath, prox
     "--no-check-certificates",
     "--geo-bypass",
     "--no-playlist",
+    "--js-runtimes", `node:${process.execPath}`,
     "--add-header", "user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "--add-header", "referer:https://www.google.com/",
   ];
