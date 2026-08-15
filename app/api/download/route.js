@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import ytdl from "@distube/ytdl-core";
-import { getYtDlpPath, writeCookiesFile, cleanupCookiesFile, getProxyUrl, getCookieAgent } from "../../../lib/get-yt-dlp";
+import { getYtDlpPath, writeCookiesFile, cleanupCookiesFile, getProxyUrl, getCookieAgent, getCookieHeaderString } from "../../../lib/get-yt-dlp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -134,12 +134,15 @@ export async function GET(req) {
   if (looksLikeCdnUrl(url) || rawFormat === "direct") {
     console.log("[download] Direct CDN proxy:", url.slice(0, 80));
     try {
-      const cdnRes = await fetch(url, {
-        headers: {
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-          "referer": "https://www.google.com/",
-        },
-      });
+      const cookieHeader = getCookieHeaderString();
+      const headers = {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "referer": "https://www.google.com/",
+      };
+      if (cookieHeader) {
+        headers["Cookie"] = cookieHeader;
+      }
+      const cdnRes = await fetch(url, { headers });
       if (cdnRes.ok && cdnRes.body) {
         const headers = {
           "Content-Type": cdnRes.headers.get("content-type") || "application/octet-stream",
@@ -249,12 +252,15 @@ export async function GET(req) {
 
   // ── PATH 4: Proxy-stream from resolved CDN URL ──
   try {
-    const cdnRes = await fetch(cdnUrl, {
-      headers: {
+      const cookieHeader = getCookieHeaderString();
+      const headers = {
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "referer": "https://www.google.com/",
-      },
-    });
+      };
+      if (cookieHeader) {
+        headers["Cookie"] = cookieHeader;
+      }
+      const cdnRes = await fetch(cdnUrl, { headers });
 
     if (cdnRes.ok && cdnRes.body) {
       const headers = {
