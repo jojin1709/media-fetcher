@@ -605,6 +605,9 @@ export default function Page() {
 
       {/* Footer */}
       <footer className="note">
+        <div style={{ marginBottom: "12px", padding: "10px 14px", background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.2)", borderRadius: "6px", color: "#f59e0b", textAlign: "left", fontSize: "12px", lineHeight: "1.5" }}>
+          ⚠️ <strong>YouTube 1080p/4K+ Resolution Notice:</strong> YouTube stores high-definition videos as separate video-only and audio-only streams. Due to Vercel serverless execution limits (10-second timeout), they cannot be combined on the server. To download them in full quality, download the video and audio tracks separately and merge them locally using a free tool like VLC, CapCut, or Handbrake. (Other platforms like TikTok and Instagram download in full HD with audio automatically!).
+        </div>
         <strong>Stream links</strong> open direct CDN URLs in a new tab.{" "}
         <strong>Download</strong> proxies the media through the server for cross-browser file saving.
         Ensure you have the right to download content per copyright law and platform Terms of Service.
